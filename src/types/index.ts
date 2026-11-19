@@ -36,9 +36,10 @@ export interface VendorProfile {
   liaison: { name: string; title: string; phone: string }
   /** 行业资质：合并为一个文件上传；noQualification=true 时为无资质情况说明 */
   qualification?: { file: string; noQualification: boolean }
-  copyrights: { name: string; regNo: string; issuedAt: string; file?: string }[]
-  patents: { name: string; number: string; file?: string }[]
-  otherIp: { name: string; file?: string }[]
+  // 软著 / 专利 / 其他知识产权：各合并为一个文件上传
+  copyrightFile?: string
+  patentFile?: string
+  otherIpFile?: string
   createdAt: string
 }
 

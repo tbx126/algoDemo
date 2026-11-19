@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Building2, CircleAlert, CircleCheck, CircleDashed, Plus, Trash2 } from 'lucide-vue-next'
+import { Building2, CircleAlert, CircleCheck, CircleDashed } from 'lucide-vue-next'
 import { ApiError, createVendor } from '@/api'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
@@ -34,9 +34,9 @@ const f = reactive({
   // 4–7
   noCert: false,
   certFile: null as FileV, // 资质证书（合并为一个文件）或无资质情况说明
-  copyrights: [] as { name: string; regNo: string; issuedAt: string; file: FileV }[],
-  patents: [] as { name: string; number: string; file: FileV }[],
-  otherIp: [] as { name: string; file: FileV }[],
+  copyrightFile: null as FileV,
+  patentFile: null as FileV,
+  otherIpFile: null as FileV,
   // 账号
   openAccount: true,
   account: { username: '', email: '' },
@@ -72,9 +72,9 @@ const status = computed<{ key: string; name: string; necessity: Necessity; ok: b
     ok: !!f.certFile,
     note: '无资质须提交情况说明',
   },
-  { key: 'copyright', name: '软件著作权证明', necessity: 'suggested', ok: f.copyrights.length > 0 && f.copyrights.every((c) => c.name && c.regNo && c.file) },
-  { key: 'patent', name: '专利证明', necessity: 'optional', ok: f.patents.length > 0 },
-  { key: 'other', name: '其他知识产权证明', necessity: 'optional', ok: f.otherIp.length > 0 },
+  { key: 'copyright', name: '软件著作权证明', necessity: 'suggested', ok: !!f.copyrightFile },
+  { key: 'patent', name: '专利证明', necessity: 'optional', ok: !!f.patentFile },
+  { key: 'other', name: '其他知识产权证明', necessity: 'optional', ok: !!f.otherIpFile },
 ])
 // 必须项全部完成；资质证书“有则提供，无则须提交情况说明”，因此也作为提交门槛
 const blocking = computed(() => status.value.filter((s) => s.necessity === 'required' && !s.ok).concat(status.value.filter((s) => s.key === 'cert' && !s.ok)))
@@ -108,9 +108,9 @@ async function submit() {
         contact: { ...f.contact },
         liaison: { ...f.liaison },
         qualification: f.certFile ? { file: f.certFile.name, noQualification: f.noCert } : undefined,
-        copyrights: f.copyrights.map((c) => ({ ...c, file: fileName(c.file) })),
-        patents: f.patents.map((c) => ({ ...c, file: fileName(c.file) })),
-        otherIp: f.otherIp.map((c) => ({ ...c, file: fileName(c.file) })),
+        copyrightFile: fileName(f.copyrightFile),
+        patentFile: fileName(f.patentFile),
+        otherIpFile: fileName(f.otherIpFile),
       },
       account: f.openAccount ? { ...f.account } : undefined,
     })
@@ -206,35 +206,29 @@ function onDoneOpen(v: boolean) {
 
         <!-- 5 软著 -->
         <FormSection id="sec-copyright" title="5. 软件著作权证明" necessity="suggested" desc="与本次申报算法、配套系统相关；著作权归属申报企业，可在国家版权中心核验；提供证书正反面扫描件。">
-          <div v-for="(c, i) in f.copyrights" :key="i" class="grid gap-3 rounded-lg border border-gray-100 p-3 sm:grid-cols-[1fr_180px_150px_auto] dark:border-gray-800">
-            <input v-model="c.name" class="input" placeholder="著作权名称" aria-label="著作权名称" />
-            <input v-model="c.regNo" class="input mono" placeholder="登记号" aria-label="登记号" />
-            <input v-model="c.issuedAt" type="date" class="input" aria-label="发证日期" title="发证日期" />
-            <button type="button" class="btn-ghost px-2" aria-label="删除软著" @click="f.copyrights.splice(i, 1)"><Trash2 class="size-4" /></button>
-            <FileSlot v-model="c.file" class="sm:col-span-4" accept=".pdf,.jpg,.png" label="证书扫描件" />
+          <div>
+            <p class="label">软件著作权证书文件</p>
+            <FileSlot v-model="f.copyrightFile" accept=".pdf,.zip" label="上传软著证书" />
+            <p class="hint">多个证书请合并为一个 PDF（或打包为 zip）上传。</p>
           </div>
-          <button type="button" class="btn-default text-xs" @click="f.copyrights.push({ name: '', regNo: '', issuedAt: '', file: null })"><Plus class="size-3.5" />添加软件著作权</button>
         </FormSection>
 
         <!-- 6 专利 -->
         <FormSection id="sec-patent" title="6. 专利证明" necessity="optional" desc="与算法核心技术相关的发明 / 实用新型专利，状态为授权有效；无相关专利可不提交。">
-          <div v-for="(c, i) in f.patents" :key="i" class="grid gap-3 rounded-lg border border-gray-100 p-3 sm:grid-cols-[1fr_200px_auto] dark:border-gray-800">
-            <input v-model="c.name" class="input" placeholder="专利名称" aria-label="专利名称" />
-            <input v-model="c.number" class="input mono" placeholder="专利号" aria-label="专利号" />
-            <button type="button" class="btn-ghost px-2" aria-label="删除专利" @click="f.patents.splice(i, 1)"><Trash2 class="size-4" /></button>
-            <FileSlot v-model="c.file" class="sm:col-span-3" accept=".pdf" label="专利证书全文及摘要" />
+          <div>
+            <p class="label">专利证明文件</p>
+            <FileSlot v-model="f.patentFile" accept=".pdf,.zip" label="上传专利证明" />
+            <p class="hint">专利证书全文及摘要，多个专利请合并为一个 PDF（或打包为 zip）上传。</p>
           </div>
-          <button type="button" class="btn-default text-xs" @click="f.patents.push({ name: '', number: '', file: null })"><Plus class="size-3.5" />添加专利</button>
         </FormSection>
 
         <!-- 7 其他 -->
         <FormSection id="sec-other" title="7. 其他知识产权证明" necessity="optional" desc="商标、技术成果登记证书、独家技术授权证明等，自愿提交。">
-          <div v-for="(c, i) in f.otherIp" :key="i" class="flex flex-wrap items-center gap-3 rounded-lg border border-gray-100 p-3 dark:border-gray-800">
-            <input v-model="c.name" class="input min-w-48 flex-1" placeholder="材料名称" aria-label="材料名称" />
-            <FileSlot v-model="c.file" accept=".pdf,.jpg,.png" label="上传" />
-            <button type="button" class="btn-ghost px-2" aria-label="删除" @click="f.otherIp.splice(i, 1)"><Trash2 class="size-4" /></button>
+          <div>
+            <p class="label">其他知识产权证明文件</p>
+            <FileSlot v-model="f.otherIpFile" accept=".pdf,.zip" label="上传证明材料" />
+            <p class="hint">多份材料请合并为一个 PDF（或打包为 zip）上传。</p>
           </div>
-          <button type="button" class="btn-default text-xs" @click="f.otherIp.push({ name: '', file: null })"><Plus class="size-3.5" />添加材料</button>
         </FormSection>
 
         <!-- 账号 -->
