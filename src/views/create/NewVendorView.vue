@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Building2, CircleAlert, CircleCheck, CircleDashed, Plus, Trash2 } from 'lucide-vue-next'
 import { ApiError, createVendor } from '@/api'
@@ -32,9 +32,8 @@ const f = reactive({
   // 3 对接人
   liaison: { name: '', title: '', phone: '' },
   // 4–7
-  certificates: [] as { name: string; number: string; issuer: string; validUntil: string; file: FileV }[],
   noCert: false,
-  noCertNote: null as FileV,
+  certFile: null as FileV, // 资质证书（合并为一个文件）或无资质情况说明
   copyrights: [] as { name: string; regNo: string; issuedAt: string; file: FileV }[],
   patents: [] as { name: string; number: string; file: FileV }[],
   otherIp: [] as { name: string; file: FileV }[],
@@ -42,6 +41,9 @@ const f = reactive({
   openAccount: true,
   account: { username: '', email: '' },
 })
+
+// 切换“暂无相关行业资质”时清空已上传文件，避免证书被当作情况说明
+watch(() => f.noCert, () => (f.certFile = null))
 
 // ---------- 校验 ----------
 const errors = computed(() => {
@@ -67,7 +69,7 @@ const status = computed<{ key: string; name: string; necessity: Necessity; ok: b
     key: 'cert',
     name: '行业资质证书',
     necessity: 'suggested',
-    ok: f.noCert ? !!f.noCertNote : f.certificates.length > 0 && f.certificates.every((c) => c.name && c.number && c.issuer && c.validUntil && c.file),
+    ok: !!f.certFile,
     note: '无资质须提交情况说明',
   },
   { key: 'copyright', name: '软件著作权证明', necessity: 'suggested', ok: f.copyrights.length > 0 && f.copyrights.every((c) => c.name && c.regNo && c.file) },
@@ -105,8 +107,7 @@ async function submit() {
         company: { ...f.company, creditCode: f.company.creditCode.toUpperCase(), licenseFile: fileName(f.company.license) },
         contact: { ...f.contact },
         liaison: { ...f.liaison },
-        certificates: f.noCert ? [] : f.certificates.map((c) => ({ ...c, file: fileName(c.file) })),
-        noCertificateNote: f.noCert ? fileName(f.noCertNote) : undefined,
+        qualification: f.certFile ? { file: f.certFile.name, noQualification: f.noCert } : undefined,
         copyrights: f.copyrights.map((c) => ({ ...c, file: fileName(c.file) })),
         patents: f.patents.map((c) => ({ ...c, file: fileName(c.file) })),
         otherIp: f.otherIp.map((c) => ({ ...c, file: fileName(c.file) })),
@@ -196,22 +197,11 @@ function onDoneOpen(v: boolean) {
         <!-- 4 资质 -->
         <FormSection id="sec-cert" title="4. 行业资质证书" necessity="suggested" desc="如人工智能行业认证、信息系统资质、安防资质、高新技术企业证书等；须在有效期内，提供含编号、发证单位、有效期的完整扫描件。有则提供，无资质须提交情况说明。">
           <label class="flex items-center gap-2 text-sm"><input v-model="f.noCert" type="checkbox" class="size-4 accent-brand-600" />暂无相关行业资质</label>
-          <div v-if="f.noCert">
-            <p class="label">无资质情况说明<span class="ml-0.5 text-rose-500">*</span></p>
-            <FileSlot v-model="f.noCertNote" accept=".pdf,.doc,.docx" label="上传情况说明" :invalid="touched && !f.noCertNote" />
+          <div>
+            <p class="label">{{ f.noCert ? '无资质情况说明' : '资质证书文件' }}<span class="ml-0.5 text-rose-500">*</span></p>
+            <FileSlot v-model="f.certFile" :accept="f.noCert ? '.pdf,.doc,.docx' : '.pdf,.zip'" :label="f.noCert ? '上传情况说明' : '上传资质证书'" :invalid="touched && !f.certFile" />
+            <p class="hint">{{ f.noCert ? '加盖企业公章的情况说明。' : '多个证书请合并为一个 PDF（或打包为 zip）上传。' }}</p>
           </div>
-          <template v-else>
-            <div v-for="(c, i) in f.certificates" :key="i" class="grid gap-3 rounded-lg border border-gray-100 p-3 sm:grid-cols-[1fr_1fr_1fr_140px_auto] dark:border-gray-800">
-              <input v-model="c.name" class="input" placeholder="证书名称" aria-label="证书名称" />
-              <input v-model="c.number" class="input mono" placeholder="证书编号" aria-label="证书编号" />
-              <input v-model="c.issuer" class="input" placeholder="发证单位" aria-label="发证单位" />
-              <input v-model="c.validUntil" type="date" class="input" aria-label="有效期至" title="有效期至" />
-              <button type="button" class="btn-ghost px-2" aria-label="删除证书" @click="f.certificates.splice(i, 1)"><Trash2 class="size-4" /></button>
-              <FileSlot v-model="c.file" class="sm:col-span-5" accept=".pdf,.jpg,.png" label="证书扫描件" :invalid="touched && !c.file" />
-            </div>
-            <button type="button" class="btn-default text-xs" @click="f.certificates.push({ name: '', number: '', issuer: '', validUntil: '', file: null })"><Plus class="size-3.5" />添加资质证书</button>
-            <p v-if="touched && !f.certificates.length" class="text-xs text-rose-600">请添加资质证书，或勾选“暂无相关行业资质”并提交情况说明</p>
-          </template>
         </FormSection>
 
         <!-- 5 软著 -->

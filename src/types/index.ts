@@ -34,8 +34,8 @@ export interface VendorProfile {
   company: { fullName: string; creditCode: string; address: string; type: string; foundedAt: string; capital: string; status: string; licenseFile?: string }
   contact: { phone: string; email: string; website: string; officeAddress: string }
   liaison: { name: string; title: string; phone: string }
-  certificates: { name: string; number: string; issuer: string; validUntil: string; file?: string }[]
-  noCertificateNote?: string // 无资质时的情况说明文件
+  /** 行业资质：合并为一个文件上传；noQualification=true 时为无资质情况说明 */
+  qualification?: { file: string; noQualification: boolean }
   copyrights: { name: string; regNo: string; issuedAt: string; file?: string }[]
   patents: { name: string; number: string; file?: string }[]
   otherIp: { name: string; file?: string }[]

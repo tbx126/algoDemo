@@ -68,7 +68,7 @@ const tab = ref<'algos' | 'datasets'>('algos')
             <div><p class="text-xs text-gray-500">类型 / 状态</p><p>{{ org.profile.company.type }} · {{ org.profile.company.status }} · {{ org.profile.company.capital }}</p></div>
             <div><p class="text-xs text-gray-500">联系方式</p><p>{{ org.profile.contact.phone }} · {{ org.profile.contact.email }}</p></div>
             <div><p class="text-xs text-gray-500">对接人</p><p>{{ org.profile.liaison.name }}（{{ org.profile.liaison.title }}）{{ org.profile.liaison.phone }}</p></div>
-            <div><p class="text-xs text-gray-500">资质 / 软著 / 专利</p><p>{{ org.profile.certificates.length || (org.profile.noCertificateNote ? '无资质（已提交说明）' : 0) }} / {{ org.profile.copyrights.length }} / {{ org.profile.patents.length }}</p></div>
+            <div><p class="text-xs text-gray-500">资质 / 软著 / 专利</p><p>{{ org.profile.qualification ? (org.profile.qualification.noQualification ? '无资质（已提交说明）' : '已提交') : '未提交' }} / {{ org.profile.copyrights.length }} / {{ org.profile.patents.length }}</p></div>
           </div>
         </aside>
       </div>
