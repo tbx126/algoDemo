@@ -138,18 +138,18 @@ function onDoneOpen(v: boolean) {
         <!-- 厂商标识 -->
         <FormSection id="sec-base" title="厂商标识" necessity="required" source="A.1 packageinfo.xml · vendor.*" desc="写入算法包描述文件，算法提交时自动带出，创建后不可修改。">
           <div class="grid gap-4 sm:grid-cols-3">
-            <TextField v-model.trim="f.vendorId" label="厂商标识" field="vendor.id" required mono placeholder="例如 HuiyanAI" hint="字母开头，可含大小写字母、数字、_ 与 -；不区分大小写判重" :touched="touched || !!f.vendorId" :error="errors.vendorId" />
-            <TextField v-model="f.zh" label="中文名称" field="vendor.zh_CN" required :max-bytes="50" placeholder="例如 慧眼智能" :touched="touched" :error="errors.zh" />
-            <TextField v-model="f.en" label="英文名称" field="vendor.en_US" :max-bytes="150" placeholder="例如 Huiyan AI" />
+            <TextField v-model.trim="f.vendorId" label="厂商标识" field="vendor.id" required mono hint="字母开头，可含大小写字母、数字、_ 与 -；不区分大小写判重" :touched="touched || !!f.vendorId" :error="errors.vendorId" />
+            <TextField v-model="f.zh" label="中文名称" field="vendor.zh_CN" required :max-bytes="50" :touched="touched" :error="errors.zh" />
+            <TextField v-model="f.en" label="英文名称" field="vendor.en_US" :max-bytes="150" />
           </div>
-          <TextField v-model="f.description" label="厂商简介" placeholder="主营方向、优势领域（平台内展示用）" />
+          <TextField v-model="f.description" label="厂商简介" />
         </FormSection>
 
         <!-- 1 企业主体信息 -->
         <FormSection id="sec-company" title="1. 企业主体信息" necessity="required" desc="与工商备案信息完全一致；须为最新有效信息，经营状态为存续 / 正常开业。">
           <div class="grid gap-4 sm:grid-cols-2">
-            <TextField v-model="f.company.fullName" label="企业全称" required placeholder="XX智能科技有限公司" :touched="touched" />
-            <TextField v-model.trim="f.company.creditCode" label="统一社会信用代码" required mono placeholder="18 位" :touched="touched || !!f.company.creditCode" :error="errors.creditCode" />
+            <TextField v-model="f.company.fullName" label="企业全称" required :touched="touched" />
+            <TextField v-model.trim="f.company.creditCode" label="统一社会信用代码" required mono :touched="touched || !!f.company.creditCode" :error="errors.creditCode" />
           </div>
           <div class="grid gap-4 sm:grid-cols-4">
             <div>
@@ -159,7 +159,7 @@ function onDoneOpen(v: boolean) {
               </select>
             </div>
             <TextField v-model="f.company.foundedAt" type="date" label="成立日期" required :touched="touched" />
-            <TextField v-model="f.company.capital" label="注册资本" required placeholder="1000 万人民币" :touched="touched" />
+            <TextField v-model="f.company.capital" label="注册资本" required :touched="touched" />
             <div>
               <label class="label" for="c-status">经营状态<span class="ml-0.5 text-rose-500">*</span></label>
               <select id="c-status" v-model="f.company.status" class="input">
@@ -167,7 +167,7 @@ function onDoneOpen(v: boolean) {
               </select>
             </div>
           </div>
-          <TextField v-model="f.company.address" label="企业注册地址" required placeholder="XX省XX市XX区XX产业园A座" :touched="touched" />
+          <TextField v-model="f.company.address" label="企业注册地址" required :touched="touched" />
           <div>
             <p class="label">营业执照扫描件<span class="ml-0.5 text-rose-500">*</span> <span class="text-xs font-normal text-gray-500">加盖企业公章</span></p>
             <FileSlot v-model="f.company.license" accept=".pdf,.jpg,.jpeg,.png" label="上传扫描件" :invalid="touched && !f.company.license" />
@@ -177,9 +177,9 @@ function onDoneOpen(v: boolean) {
         <!-- 2 联系方式 -->
         <FormSection id="sec-contact" title="2. 企业联系方式" necessity="required" desc="联系方式须真实可接通、可接收邮件；企业邮箱或个人邮箱均可；变更需及时报备。">
           <div class="grid gap-4 sm:grid-cols-2">
-            <TextField v-model.trim="f.contact.phone" label="官方联系电话" required placeholder="0XX-12345678" :touched="touched || !!f.contact.phone" :error="errors.phone" />
-            <TextField v-model.trim="f.contact.email" type="email" label="联系邮箱" required placeholder="service@company.com" :touched="touched || !!f.contact.email" :error="errors.email" />
-            <TextField v-model.trim="f.contact.website" label="官方网址" required placeholder="https://www.company.com" :touched="touched || !!f.contact.website" :error="errors.website" />
+            <TextField v-model.trim="f.contact.phone" label="官方联系电话" required :touched="touched || !!f.contact.phone" :error="errors.phone" />
+            <TextField v-model.trim="f.contact.email" type="email" label="联系邮箱" required :touched="touched || !!f.contact.email" :error="errors.email" />
+            <TextField v-model.trim="f.contact.website" label="官方网址" required :touched="touched || !!f.contact.website" :error="errors.website" />
             <TextField v-model="f.contact.officeAddress" label="办公地址" required :touched="touched" />
           </div>
         </FormSection>
@@ -188,8 +188,8 @@ function onDoneOpen(v: boolean) {
         <FormSection id="sec-liaison" title="3. 对接人信息" necessity="required" desc="须为在职正式员工，固定对接算法接入全流程。">
           <div class="grid gap-4 sm:grid-cols-3">
             <TextField v-model="f.liaison.name" label="姓名" required :touched="touched" />
-            <TextField v-model="f.liaison.title" label="岗位职务" required placeholder="算法项目专员" :touched="touched" />
-            <TextField v-model.trim="f.liaison.phone" label="联系电话" required placeholder="138XXXX1234" :touched="touched || !!f.liaison.phone" :error="errors.liaisonPhone" />
+            <TextField v-model="f.liaison.title" label="岗位职务" required :touched="touched" />
+            <TextField v-model.trim="f.liaison.phone" label="联系电话" required :touched="touched || !!f.liaison.phone" :error="errors.liaisonPhone" />
           </div>
         </FormSection>
 
@@ -217,8 +217,8 @@ function onDoneOpen(v: boolean) {
         <!-- 5 软著 -->
         <FormSection id="sec-copyright" title="5. 软件著作权证明" necessity="suggested" desc="与本次申报算法、配套系统相关；著作权归属申报企业，可在国家版权中心核验；提供证书正反面扫描件。">
           <div v-for="(c, i) in f.copyrights" :key="i" class="grid gap-3 rounded-lg border border-gray-100 p-3 sm:grid-cols-[1fr_180px_150px_auto] dark:border-gray-800">
-            <input v-model="c.name" class="input" placeholder="著作权名称，如 XX目标检测算法V1.0" aria-label="著作权名称" />
-            <input v-model="c.regNo" class="input mono" placeholder="登记号 202XSRXXXXXX" aria-label="登记号" />
+            <input v-model="c.name" class="input" placeholder="著作权名称" aria-label="著作权名称" />
+            <input v-model="c.regNo" class="input mono" placeholder="登记号" aria-label="登记号" />
             <input v-model="c.issuedAt" type="date" class="input" aria-label="发证日期" title="发证日期" />
             <button type="button" class="btn-ghost px-2" aria-label="删除软著" @click="f.copyrights.splice(i, 1)"><Trash2 class="size-4" /></button>
             <FileSlot v-model="c.file" class="sm:col-span-4" accept=".pdf,.jpg,.png" label="证书扫描件" />
@@ -251,8 +251,8 @@ function onDoneOpen(v: boolean) {
         <FormSection id="sec-account" title="开通厂商账号" desc="账号归属该厂商，用于提交算法与查看自己的评测结果。也可稍后在“管理 → 用户与账号”中添加。">
           <label class="flex items-center gap-2 text-sm"><input v-model="f.openAccount" type="checkbox" class="size-4 accent-brand-600" />同时为对接人开通厂商账号</label>
           <div v-if="f.openAccount" class="grid gap-4 sm:grid-cols-2">
-            <TextField v-model.trim="f.account.username" label="用户名" required mono placeholder="例如 hy.zhang" :touched="touched || !!f.account.username" :error="errors.username" />
-            <TextField v-model.trim="f.account.email" type="email" label="登录邮箱" required :placeholder="f.contact.email || 'name@company.com'" :touched="touched" />
+            <TextField v-model.trim="f.account.username" label="用户名" required mono :touched="touched || !!f.account.username" :error="errors.username" />
+            <TextField v-model.trim="f.account.email" type="email" label="登录邮箱" required :touched="touched" />
           </div>
         </FormSection>
       </form>

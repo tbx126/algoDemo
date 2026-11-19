@@ -190,7 +190,7 @@ async function submit() {
                 <p class="input mono bg-gray-50 text-gray-600 dark:bg-gray-800/60 dark:text-gray-300">{{ namespace }}</p>
                 <p class="hint">{{ state.role === 'admin' ? '管理员上传的数据集统一放在 Admin' : '厂商上传的数据集放在自己的厂商标识下' }}</p>
               </div>
-              <TextField v-model="f.name" label="数据集名称" required mono placeholder="例如 helmet-det" :hint="`ID：${namespace}/${f.name || '…'}，小写字母、数字和连字符`" />
+              <TextField v-model="f.name" label="数据集名称" required mono :hint="`ID：${namespace}/${f.name || '…'}，小写字母、数字和连字符`" />
             </div>
             <div class="grid gap-4 sm:grid-cols-2">
               <div>
@@ -201,8 +201,8 @@ async function submit() {
                 <p class="hint">决定 labels.csv 的必需列</p>
               </div>
             </div>
-            <TextField v-model="f.summary" label="简介" required multiline :rows="2" placeholder="数据来源、场景、规模等" />
-            <TagInput v-if="needsClasses" v-model="f.classes" label="类别表" required placeholder="输入类别名后回车，如 未戴安全帽" hint="训练集与测试集共用；labels.csv 的 label 必须在此表内" />
+            <TextField v-model="f.summary" label="简介" required multiline :rows="2" />
+            <TagInput v-if="needsClasses" v-model="f.classes" label="类别表" required hint="训练集与测试集共用；labels.csv 的 label 必须在此表内" />
           </template>
 
           <template v-else>
@@ -308,7 +308,7 @@ async function submit() {
             <dt class="text-gray-500">数据包</dt><dd class="mono">{{ f.zip?.name }}（{{ fmtBytes(f.zip?.size ?? 0) }}）</dd>
             <dt class="text-gray-500">labels.csv</dt><dd>{{ parsed.rows.length }} 行 · 表头 <code class="mono">{{ parsed.header.join(',') }}</code></dd>
           </dl>
-          <TextField v-model="f.note" label="版本说明" placeholder="如 补充夜间难例" />
+          <TextField v-model="f.note" label="版本说明" />
           <p class="flex items-start gap-1.5 rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-gray-800/60 dark:text-gray-400">
             <Lock class="mt-0.5 size-3.5 shrink-0" />
             <template v-if="part === 'test'">测试集发布后仅管理员可查看与下载；评测时算法容器只挂载 images/，labels.csv 留在平台侧计算指标。</template>

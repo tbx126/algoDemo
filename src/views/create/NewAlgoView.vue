@@ -357,7 +357,7 @@ ${f.cond.weather ? `- 天气：${f.cond.weather}\n` : ''}${f.cond.light ? `- 光
 
           <FormSection title="算法包信息" source="A.1 packageinfo.xml">
             <div class="grid gap-4 sm:grid-cols-[1fr_180px]">
-              <TextField v-model="f.id" label="算法标识" field="package.id" required :max-bytes="30" mono placeholder="例如 helmetDetect" hint="字母开头，可含字母、数字、_ 与 -" :touched="touched[0] || !!f.id" :error="errs[0].find((x) => x.startsWith('算法标识'))" />
+              <TextField v-model="f.id" label="算法标识" field="package.id" required :max-bytes="30" mono hint="字母开头，可含字母、数字、_ 与 -" :touched="touched[0] || !!f.id" :error="errs[0].find((x) => x.startsWith('算法标识'))" />
               <TextField v-model="f.version" label="版本号" field="package.version" required :max-bytes="30" mono :touched="touched[0]" :error="errs[0].find((x) => x.startsWith('版本号'))" />
             </div>
           </FormSection>
@@ -375,7 +375,7 @@ ${f.cond.weather ? `- 天气：${f.cond.weather}\n` : ''}${f.cond.light ? `- 光
                   <option v-for="x in INDUSTRY_CODES" :key="x.code" :value="x.code">{{ x.code }} · {{ x.label }}</option>
                 </select>
                 <span class="text-gray-400">+</span>
-                <input v-model="f.bizCode" class="input mono w-36" placeholder="业务编码 如 0101" aria-label="业务编码" @keydown.enter.prevent="addClass" />
+                <input v-model="f.bizCode" class="input mono w-36" placeholder="业务编码" aria-label="业务编码" @keydown.enter.prevent="addClass" />
                 <button type="button" class="btn-default" @click="addClass"><Plus class="size-4" />添加 <code class="mono text-xs">{{ classCode }}</code></button>
               </div>
               <div class="mt-2 flex flex-wrap gap-1.5">
@@ -410,9 +410,9 @@ ${f.cond.weather ? `- 天气：${f.cond.weather}\n` : ''}${f.cond.light ? `- 光
 
           <FormSection title="使用要求（中文）" source="conditions.description.zh_CN" necessity="required" desc="每项 ≤100 字节。">
             <div class="grid gap-4 sm:grid-cols-3">
-              <TextField v-model="f.cond.pixel" label="目标像素要求" field="pixel" required :max-bytes="100" placeholder="如 目标像素不小于 30×30" :touched="touched[1]" />
-              <TextField v-model="f.cond.baffle" label="目标遮挡粘贴" field="baffle" required :max-bytes="100" placeholder="如 遮挡不超过 30%" :touched="touched[1]" />
-              <TextField v-model="f.cond.image" label="画面质量" field="image" required :max-bytes="100" placeholder="如 无明显模糊、花屏" :touched="touched[1]" />
+              <TextField v-model="f.cond.pixel" label="目标像素要求" field="pixel" required :max-bytes="100" :touched="touched[1]" />
+              <TextField v-model="f.cond.baffle" label="目标遮挡粘贴" field="baffle" required :max-bytes="100" :touched="touched[1]" />
+              <TextField v-model="f.cond.image" label="画面质量" field="image" required :max-bytes="100" :touched="touched[1]" />
               <TextField v-model="f.cond.weather" label="天气要求" field="weather" :max-bytes="100" />
               <TextField v-model="f.cond.light" label="光线要求" field="light" :max-bytes="100" />
               <TextField v-model="f.cond.other" label="其他要求" field="other" :max-bytes="100" />
@@ -456,13 +456,13 @@ ${f.cond.weather ? `- 天气：${f.cond.weather}\n` : ''}${f.cond.light ? `- 光
                 </div>
                 <template v-if="s.type === 'picture' || s.type === 'video'">
                   <div class="grid grid-cols-2 gap-3 sm:col-span-2">
-                    <TextField :model-value="s.min ?? ''" label="分辨率下限" field="min" required :max-bytes="20" mono placeholder="640*480" @update:model-value="s.min = $event" />
-                    <TextField :model-value="s.max ?? ''" label="分辨率上限" field="max" required :max-bytes="20" mono placeholder="4096*4096" @update:model-value="s.max = $event" />
+                    <TextField :model-value="s.min ?? ''" label="分辨率下限" field="min" required :max-bytes="20" mono @update:model-value="s.min = $event" />
+                    <TextField :model-value="s.max ?? ''" label="分辨率上限" field="max" required :max-bytes="20" mono @update:model-value="s.max = $event" />
                   </div>
                 </template>
                 <template v-if="s.type === 'audio' || s.type === 'video'">
                   <TagInput v-model="s.audioFormat" label="音频编码格式" field="audioFormat" required :suggestions="AUDIO_FORMATS" :touched="touched[2]" />
-                  <TextField :model-value="s.sampleRate ?? ''" label="音频采样率" field="sampleRate" required :max-bytes="20" mono placeholder="16000" @update:model-value="s.sampleRate = $event" />
+                  <TextField :model-value="s.sampleRate ?? ''" label="音频采样率" field="sampleRate" required :max-bytes="20" mono @update:model-value="s.sampleRate = $event" />
                   <div>
                     <label class="label">音频采样位数<span class="ml-0.5 text-rose-500">*</span> <code class="mono text-[11px] font-normal text-gray-400">sampleBit</code></label>
                     <input v-model.number="s.sampleBit" type="number" min="1" class="input" aria-label="音频采样位数" />
@@ -490,16 +490,16 @@ ${f.cond.weather ? `- 天气：${f.cond.weather}\n` : ''}${f.cond.light ? `- 光
             </div>
             <label class="flex items-center gap-2 text-sm"><input v-model="f.useBase" type="checkbox" class="size-4 accent-brand-600" />声明基础环境信息 <code class="mono text-xs text-gray-400">basePackage（可选）</code></label>
             <div v-if="f.useBase" class="grid gap-3 sm:grid-cols-4">
-              <TextField v-model="f.base.id" label="标识" field="id" required :max-bytes="20" mono placeholder="cuda" :touched="touched[2]" />
-              <TextField v-model="f.base.minorVersion" label="最低版本" field="minorVersion" required :max-bytes="20" mono placeholder="11.8" :touched="touched[2]" />
-              <TextField v-model="f.base.majorVersion" label="最高版本" field="majorVersion" required :max-bytes="20" mono placeholder="12.4" :touched="touched[2]" />
+              <TextField v-model="f.base.id" label="标识" field="id" required :max-bytes="20" mono :touched="touched[2]" />
+              <TextField v-model="f.base.minorVersion" label="最低版本" field="minorVersion" required :max-bytes="20" mono :touched="touched[2]" />
+              <TextField v-model="f.base.majorVersion" label="最高版本" field="majorVersion" required :max-bytes="20" mono :touched="touched[2]" />
               <TextField v-model="f.base.relatedPodImageName" label="镜像名称" field="relatedPodImageName" :max-bytes="100" mono />
             </div>
             <label class="flex items-center gap-2 text-sm"><input v-model="f.useDriver" type="checkbox" class="size-4 accent-brand-600" />声明驱动信息 <code class="mono text-xs text-gray-400">driver（可选）</code></label>
             <div v-if="f.useDriver" class="grid gap-3 sm:grid-cols-3">
-              <TextField v-model="f.driver.type" label="驱动类型" field="type" required :max-bytes="20" mono placeholder="nvidia" :touched="touched[2]" />
-              <TextField v-model="f.driver.minorVersion" label="驱动最低版本" field="minorVersion" required :max-bytes="20" mono placeholder="525.60" :touched="touched[2]" />
-              <TextField v-model="f.driver.majorVersion" label="驱动最高版本" field="majorVersion" required :max-bytes="20" mono placeholder="550.54" :touched="touched[2]" />
+              <TextField v-model="f.driver.type" label="驱动类型" field="type" required :max-bytes="20" mono :touched="touched[2]" />
+              <TextField v-model="f.driver.minorVersion" label="驱动最低版本" field="minorVersion" required :max-bytes="20" mono :touched="touched[2]" />
+              <TextField v-model="f.driver.majorVersion" label="驱动最高版本" field="majorVersion" required :max-bytes="20" mono :touched="touched[2]" />
             </div>
           </FormSection>
 
@@ -528,7 +528,7 @@ ${f.cond.weather ? `- 天气：${f.cond.weather}\n` : ''}${f.cond.light ? `- 光
                         <option v-for="t in SOURCE_TYPES" :key="t.v" :value="t.v">{{ t.v }}</option>
                       </select>
                     </td>
-                    <td><input v-model="a.specification" class="input mono py-1" placeholder="1080P" aria-label="规格" /></td>
+                    <td><input v-model="a.specification" class="input mono py-1" aria-label="规格" /></td>
                     <td><input v-model.number="a.ability" type="number" min="0" max="100" step="0.1" class="input py-1" aria-label="芯片算力使用量" /></td>
                     <td><input v-model.number="a.taskAbility" type="number" min="1" step="1" class="input py-1" aria-label="单路处理速度" /></td>
                     <td><button v-if="f.abilities.length > 1" type="button" class="btn-ghost px-1.5" aria-label="删除规格" @click="f.abilities.splice(i, 1)"><Trash2 class="size-3.5" /></button></td>
@@ -541,9 +541,9 @@ ${f.cond.weather ? `- 天气：${f.cond.weather}\n` : ''}${f.cond.light ? `- 光
           </FormSection>
 
           <FormSection title="参数和输出" source="regulation" necessity="required">
-            <TextField v-model="f.regulation.input" label="参数" field="input" required multiline :rows="4" mono :max-bytes="5000" placeholder="算法支持的分析参数定义（JSON），结构见第二部分 B.7" :touched="touched[2]" />
-            <TextField v-model="f.regulation.output" label="目标属性" field="output" required multiline :rows="4" mono :max-bytes="5000" placeholder="输出目标及属性定义（JSON）" :touched="touched[2]" />
-            <TextField v-model="f.regulation.eventCode" label="事件信息" field="eventCode" required :max-bytes="50" mono placeholder="如 NO_HELMET" :touched="touched[2]" />
+            <TextField v-model="f.regulation.input" label="参数" field="input" required multiline :rows="4" mono :max-bytes="5000" :touched="touched[2]" />
+            <TextField v-model="f.regulation.output" label="目标属性" field="output" required multiline :rows="4" mono :max-bytes="5000" :touched="touched[2]" />
+            <TextField v-model="f.regulation.eventCode" label="事件信息" field="eventCode" required :max-bytes="50" mono :touched="touched[2]" />
           </FormSection>
 
           <FormSection title="特征模型" source="featureModel · 表 A.7" necessity="optional">
@@ -561,7 +561,7 @@ ${f.cond.weather ? `- 天气：${f.cond.weather}\n` : ''}${f.cond.light ? `- 光
           <p class="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-gray-800/60 dark:text-gray-400">第二部分规定的参数由业务在下发任务时配置。此处声明算法<b>支持哪些参数</b>及默认值，平台据此生成任务配置界面。</p>
 
           <FormSection title="事件类型" source="B.7 ruleParam.eventType" necessity="required" desc="算法可上报的事件类型，每项 ≤32 字节。">
-            <TagInput v-model="f.params.eventTypes" label="事件类型" field="eventType" required :max-bytes="32" placeholder="如 noHelmet，回车添加" :touched="touched[3]" />
+            <TagInput v-model="f.params.eventTypes" label="事件类型" field="eventType" required :max-bytes="32" :touched="touched[3]" />
           </FormSection>
 
           <FormSection title="通用参数" source="B.1 generalParam" necessity="optional">
@@ -637,7 +637,7 @@ ${f.cond.weather ? `- 天气：${f.cond.weather}\n` : ''}${f.cond.light ? `- 光
             </div>
           </FormSection>
 
-          <TextField v-model="f.changelog" label="本版本变更说明" placeholder="首次发布" />
+          <TextField v-model="f.changelog" label="本版本变更说明" />
         </template>
 
         <!-- ============ 5 确认 ============ -->

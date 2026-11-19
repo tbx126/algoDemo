@@ -121,16 +121,16 @@ async function submit() {
         <div class="grid gap-4 sm:grid-cols-2">
           <div>
             <label class="label" for="b-name">基准 ID</label>
-            <input id="b-name" v-model.trim="f.name" class="input mono" placeholder="例如 street-det-v5" />
+            <input id="b-name" v-model.trim="f.name" class="input mono" />
           </div>
           <div>
             <label class="label" for="b-dn">显示名称</label>
-            <input id="b-dn" v-model="f.displayName" class="input" placeholder="例如 街景目标检测 · v5" />
+            <input id="b-dn" v-model="f.displayName" class="input" />
           </div>
         </div>
         <div>
           <label class="label" for="b-desc">说明</label>
-          <textarea id="b-desc" v-model="f.description" rows="2" class="input" placeholder="评测范围、子集筛选规则等" />
+          <textarea id="b-desc" v-model="f.description" rows="2" class="input" />
         </div>
 
         <div v-if="ds">
