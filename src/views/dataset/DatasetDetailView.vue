@@ -1,0 +1,276 @@
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { BookOpen, Download, Eye, EyeOff, FlaskConical, GitCommitVertical, Heart, Lock, Table2, Trophy, Upload } from 'lucide-vue-next'
+import { getDataset, listBenchmarks } from '@/api'
+import { useAsync } from '@/utils/useAsync'
+import { useSession } from '@/stores/session'
+import { fmtBytes, fmtNum, timeAgo } from '@/utils/format'
+import { toast } from '@/stores/toast'
+import { fileNameOf, labelSpec, rowsFor } from '@/utils/labels'
+import type { DatasetPart, SplitName } from '@/types'
+import StateView from '@/components/ui/StateView.vue'
+import OrgAvatar from '@/components/ui/OrgAvatar.vue'
+import TaskBadge from '@/components/ui/TaskBadge.vue'
+import HashText from '@/components/ui/HashText.vue'
+import MarkdownView from '@/components/ui/MarkdownView.vue'
+import SynthImage from '@/components/ui/SynthImage.vue'
+import Modal from '@/components/ui/Modal.vue'
+
+const route = useRoute()
+const router = useRouter()
+const { can } = useSession()
+const id = computed(() => `${route.params.org}/${route.params.name}`)
+const tab = computed(() => (route.query.tab as string) || 'card')
+const setTab = (t: string) => router.replace({ query: t === 'card' ? {} : { tab: t } })
+
+const { data: ds, loading, error } = useAsync(() => getDataset(id.value))
+const { data: allBench } = useAsync(() => listBenchmarks())
+const benches = computed(() => allBench.value?.filter((b) => b.datasetId === id.value) ?? [])
+const liked = ref(false)
+const spec = computed(() => (ds.value ? labelSpec(ds.value.task) : null))
+const PART_LABEL: Record<SplitName, string> = { train: '训练集', test: '测试集' }
+
+// ---------- 当前查看的部分 ----------
+const partName = computed<SplitName>(() => (tab.value === 'test' ? 'test' : 'train'))
+const part = computed<DatasetPart | null>(() => (ds.value ? ds.value[partName.value] : null))
+/** 测试集内容（样本与 labels.csv）仅管理员可见 */
+const locked = computed(() => partName.value === 'test' && !can.value.testAccess)
+const version = ref('')
+watch(part, (p) => (version.value = p?.versions[0].version ?? ''), { immediate: true })
+const ver = computed(() => part.value?.versions.find((v) => v.version === version.value) ?? part.value?.versions[0])
+const offset = computed(() => (partName.value === 'train' ? 0 : 90000) + (part.value ? part.value.versions.findIndex((v) => v.version === version.value) * 7 : 0))
+
+const showAnn = ref(true)
+const count = ref(18)
+watch(partName, () => (count.value = 18))
+const seedOf = (i: number) => (ds.value?.previewSeed ?? 0) + offset.value + i
+const csvRows = computed(() => {
+  if (!ds.value || !part.value) return []
+  const out: { idx: number; row: string[] }[] = []
+  for (let i = 1; out.length < 12 && i < 40; i++) for (const row of rowsFor(seedOf(i), i, partName.value, ds.value.task, ds.value.classes, part.value.columns)) out.push({ idx: i, row })
+  return out.slice(0, 12)
+})
+const classMax = computed(() => Math.max(1, ...Object.values(part.value?.classCounts ?? {})))
+
+// 单个样本详情
+const zoom = ref<number | null>(null)
+const zoomOpen = computed({ get: () => zoom.value !== null, set: (v) => !v && (zoom.value = null) })
+const zoomRows = computed(() => (ds.value && part.value && zoom.value !== null ? rowsFor(seedOf(zoom.value), zoom.value, partName.value, ds.value.task, ds.value.classes, part.value.columns) : []))
+
+function download(p: SplitName) {
+  toast(`已生成${PART_LABEL[p]} ${ds.value?.[p]?.versions[0].version} 的下载链接（images/ + labels.csv，模拟）`)
+}
+</script>
+
+<template>
+  <StateView :loading="loading" :error="error">
+    <template v-if="ds">
+      <div class="border-b border-gray-100 bg-gradient-to-t from-gray-50/80 to-white pt-8 dark:border-gray-800 dark:from-gray-900/60 dark:to-gray-950">
+        <div class="container-page">
+          <div class="flex flex-wrap items-center gap-2 text-lg">
+            <span class="chip mr-1 text-[11px]">数据集</span>
+            <OrgAvatar :org="ds.org" :size="22" />
+            <RouterLink :to="`/orgs/${ds.org}`" class="text-gray-500 hover:text-brand-600">{{ ds.org }}</RouterLink>
+            <span class="text-gray-300">/</span>
+            <h1 class="mono font-semibold text-gray-900 dark:text-white">{{ ds.name }}</h1>
+            <button class="btn-default ml-1 px-2 py-0.5 text-xs" :aria-pressed="liked" @click="liked = !liked">
+              <Heart class="size-3.5" :class="liked ? 'fill-rose-500 text-rose-500' : ''" />{{ ds.likes + (liked ? 1 : 0) }}
+            </button>
+            <RouterLink v-if="can.createDataset" :to="`/datasets/new?dataset=${ds.id}`" class="btn-default ml-auto text-sm"><Upload class="size-4" />上传新版本</RouterLink>
+          </div>
+          <div class="mt-3 flex flex-wrap items-center gap-1.5">
+            <TaskBadge :task="ds.task" />
+            <span class="chip">训练集 {{ fmtNum(ds.train.versions[0].files) }} · {{ ds.train.versions[0].version }}</span>
+            <span class="chip"><Lock class="size-3" />测试集 {{ ds.test ? `${fmtNum(ds.test.versions[0].files)} · ${ds.test.versions[0].version}` : '未上传' }}</span>
+            <span v-for="t in ds.tags" :key="t" class="chip">{{ t }}</span>
+          </div>
+          <div class="no-scrollbar mt-4 flex gap-1 overflow-x-auto overflow-y-hidden">
+            <button class="tab" :class="{ 'tab-active': tab === 'card' }" @click="setTab('card')"><BookOpen class="size-4" />数据集卡片</button>
+            <button class="tab" :class="{ 'tab-active': tab === 'train' }" @click="setTab('train')"><Table2 class="size-4" />训练集</button>
+            <button class="tab" :class="{ 'tab-active': tab === 'test' }" @click="setTab('test')"><Lock class="size-4" />测试集</button>
+            <button class="tab" :class="{ 'tab-active': tab === 'versions' }" @click="setTab('versions')"><GitCommitVertical class="size-4" />版本</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="container-page pt-6">
+        <!-- ========== 卡片 ========== -->
+        <div v-if="tab === 'card'" class="flex flex-col gap-8 lg:flex-row">
+          <div class="min-w-0 flex-1">
+            <div class="mb-6 overflow-hidden rounded-xl border border-gray-100 dark:border-gray-800">
+              <div class="flex items-center justify-between border-b border-gray-100 px-3 py-2 text-sm dark:border-gray-800">
+                <span class="font-medium">训练集预览</span>
+                <button class="cursor-pointer text-xs text-brand-600 hover:underline" @click="setTab('train')">查看训练集 →</button>
+              </div>
+              <div class="grid grid-cols-3 gap-1 p-1 sm:grid-cols-6">
+                <div v-for="i in 6" :key="i" class="overflow-hidden rounded-md">
+                  <SynthImage :seed="ds.previewSeed + i" :task="ds.task" :classes="ds.classes" annotate :width="240" :height="180" />
+                </div>
+              </div>
+            </div>
+            <MarkdownView :source="ds.readme" />
+          </div>
+          <aside class="w-full shrink-0 space-y-5 lg:w-[360px]">
+            <div class="card divide-y divide-gray-100 dark:divide-gray-800">
+              <div v-for="p in (['train', 'test'] as const)" :key="p" class="p-4">
+                <div class="flex items-center gap-2">
+                  <h3 class="flex items-center gap-1.5 text-sm font-semibold">{{ PART_LABEL[p] }}<Lock v-if="p === 'test'" class="size-3.5 text-amber-500" /></h3>
+                  <span v-if="ds[p]" class="mono ml-auto text-xs text-gray-500">{{ ds[p]!.versions[0].version }}</span>
+                </div>
+                <template v-if="ds[p]">
+                  <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">{{ fmtNum(ds[p]!.versions[0].files) }} 个文件 · {{ fmtNum(ds[p]!.versions[0].rows) }} 行标注 · {{ fmtBytes(ds[p]!.versions[0].sizeBytes) }}</p>
+                  <p class="mt-1 text-xs text-gray-500">{{ p === 'train' ? '所有账号可查看与下载' : '仅管理员可查看与下载，厂商可在其上评测' }}</p>
+                  <button v-if="p === 'train' || can.testAccess" class="btn-default mt-2 w-full text-xs" @click="download(p)"><Download class="size-3.5" />下载{{ PART_LABEL[p] }}</button>
+                </template>
+                <p v-else class="mt-1 text-sm text-gray-500">尚未上传<RouterLink v-if="can.createDataset" :to="`/datasets/new?dataset=${ds.id}&part=${p}`" class="ml-1 text-brand-600 hover:underline">去上传</RouterLink></p>
+              </div>
+            </div>
+            <div class="card p-4">
+              <h3 class="mb-2 text-sm font-semibold">labels.csv 表头</h3>
+              <pre class="mono overflow-x-auto rounded-lg bg-gray-900 p-2.5 text-xs text-gray-100">{{ ds.train.columns.join(',') }}</pre>
+              <p class="mt-2 text-xs text-gray-500">{{ spec?.desc }}。训练集与测试集表头一致。</p>
+            </div>
+            <div class="card p-4">
+              <h3 class="mb-2 text-sm font-semibold">类别（{{ ds.classes.length }}）</h3>
+              <div class="flex flex-wrap gap-1.5"><span v-for="c in ds.classes" :key="c" class="chip">{{ c }}</span></div>
+            </div>
+            <div class="card p-4">
+              <div class="mb-2 flex items-center gap-2"><Trophy class="size-4 text-amber-500" /><h3 class="text-sm font-semibold">使用此测试集的评测基准</h3></div>
+              <p v-if="!benches.length" class="text-sm text-gray-500">暂无</p>
+              <RouterLink v-for="b in benches" :key="b.id" :to="`/benchmarks/${b.id}`" class="block rounded-lg px-2 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-800">
+                {{ b.displayName }} <span class="text-xs text-gray-500">· 测试集 {{ b.datasetVersion }}</span>
+              </RouterLink>
+              <RouterLink v-if="can.createBenchmark && ds.test" :to="`/benchmarks/new?dataset=${ds.id}`" class="btn-default mt-2 w-full text-xs">基于此测试集新建评测基准</RouterLink>
+            </div>
+          </aside>
+        </div>
+
+        <!-- ========== 训练集 / 测试集 ========== -->
+        <div v-else-if="tab === 'train' || tab === 'test'">
+          <div v-if="!part" class="flex flex-col items-center gap-2 rounded-xl border border-dashed border-gray-200 py-16 text-center dark:border-gray-800">
+            <p class="font-medium">尚未上传{{ PART_LABEL[partName] }}</p>
+            <RouterLink v-if="can.createDataset" :to="`/datasets/new?dataset=${ds.id}&part=${partName}`" class="btn-primary mt-2"><Upload class="size-4" />上传{{ PART_LABEL[partName] }}</RouterLink>
+          </div>
+
+          <!-- 非管理员查看测试集：只给统计 -->
+          <div v-else-if="locked" class="flex flex-col items-center gap-2 rounded-xl border border-dashed border-amber-300 bg-amber-50/50 px-6 py-16 text-center dark:border-amber-800 dark:bg-amber-900/10">
+            <Lock class="size-8 text-amber-500" />
+            <p class="font-medium text-gray-900 dark:text-white">测试集内容仅管理员可见</p>
+            <p class="max-w-md text-sm text-gray-600 dark:text-gray-400">当前版本 {{ part.versions[0].version }} 共 {{ fmtNum(part.versions[0].files) }} 个文件。评测时算法容器只读取 images/，labels.csv 留在平台侧计算指标。</p>
+            <RouterLink v-if="can.runEval && benches.length" :to="'/evals/new?bench=' + benches[0].id" class="btn-default mt-2"><FlaskConical class="size-4" />在评测基准上发起评测</RouterLink>
+          </div>
+
+          <template v-else>
+            <div class="mb-4 flex flex-wrap items-center gap-2">
+              <select v-model="version" class="input w-auto" aria-label="选择版本">
+                <option v-for="v in part.versions" :key="v.version" :value="v.version">{{ v.version }}{{ v === part.versions[0] ? '（最新）' : '' }}</option>
+              </select>
+              <span class="chip">{{ fmtNum(ver?.files ?? 0) }} 个文件</span>
+              <span class="chip">{{ fmtNum(ver?.rows ?? 0) }} 行标注</span>
+              <span class="chip">{{ fmtBytes(ver?.sizeBytes ?? 0) }}</span>
+              <HashText v-if="ver" :value="ver.contentHash" />
+              <span v-if="partName === 'test'" class="chip border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-300"><Lock class="size-3" />仅管理员可见</span>
+              <div class="ml-auto flex gap-2">
+                <RouterLink v-if="can.createDataset" :to="`/datasets/new?dataset=${ds.id}&part=${partName}`" class="btn-default"><Upload class="size-4" />上传新版本</RouterLink>
+                <button class="btn-primary" @click="download(partName)"><Download class="size-4" />下载</button>
+              </div>
+            </div>
+
+            <div class="grid gap-6 lg:grid-cols-[1fr_300px]">
+              <div class="min-w-0">
+                <div class="mb-2 flex items-center justify-between">
+                  <h2 class="text-sm font-semibold">labels.csv <span class="font-normal text-gray-500">· 前 {{ csvRows.length }} 行，共 {{ fmtNum(ver?.rows ?? 0) }} 行</span></h2>
+                </div>
+                <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                  <table class="table-base mono text-xs">
+                    <thead><tr><th v-for="h in part.columns" :key="h">{{ h }}</th></tr></thead>
+                    <tbody>
+                      <tr v-for="(r, i) in csvRows" :key="i" class="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-900" @click="zoom = r.idx">
+                        <td v-for="(c, j) in r.row" :key="j" class="whitespace-nowrap" :class="!c ? 'text-gray-300 dark:text-gray-600' : ''">{{ c || '∅' }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div v-if="Object.keys(part.classCounts).length">
+                <h2 class="mb-2 text-sm font-semibold">类别分布</h2>
+                <div class="space-y-1.5">
+                  <div v-for="(n, c) in part.classCounts" :key="c" class="grid grid-cols-[96px_1fr_52px] items-center gap-2 text-xs">
+                    <span class="truncate" :title="String(c)">{{ c }}</span>
+                    <div class="h-2 rounded-r-[4px]" style="background: var(--series-1)" :style="{ width: Math.max(2, (n / classMax) * 100) + '%' }" />
+                    <span class="mono text-right text-gray-500">{{ fmtNum(n) }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-8 mb-3 flex items-center gap-3">
+              <h2 class="text-sm font-semibold">images/ 预览</h2>
+              <button class="btn-default py-1 text-xs" @click="showAnn = !showAnn"><component :is="showAnn ? Eye : EyeOff" class="size-3.5" />{{ showAnn ? '叠加标注' : '原图' }}</button>
+              <span class="text-xs text-gray-500">点击查看该样本在 labels.csv 中的行</span>
+            </div>
+            <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
+              <button v-for="i in count" :key="partName + version + i" class="group cursor-pointer overflow-hidden rounded-lg border border-gray-100 text-left dark:border-gray-800" @click="zoom = i">
+                <SynthImage :seed="seedOf(i)" :task="ds.task" :classes="ds.classes" :annotate="showAnn" :width="240" :height="180" class="transition group-hover:opacity-90" />
+                <div class="mono truncate px-2 py-1 text-[11px] text-gray-500">{{ fileNameOf(partName, i, spec?.dataExt).replace('images/', '') }}</div>
+              </button>
+            </div>
+            <div class="mt-6 text-center">
+              <button v-if="count < 72" class="btn-default" @click="count += 18">加载更多</button>
+            </div>
+          </template>
+        </div>
+
+        <!-- ========== 版本 ========== -->
+        <div v-else class="space-y-8">
+          <p class="text-sm text-gray-500">训练集与测试集分别发布、各自编号；版本不可变。评测基准绑定测试集的具体版本，保证结果可复现。</p>
+          <section v-for="p in (['train', 'test'] as const)" :key="p">
+            <div class="mb-2 flex items-center gap-2">
+              <h2 class="section-title flex items-center gap-1.5">{{ PART_LABEL[p] }}<Lock v-if="p === 'test'" class="size-4 text-amber-500" /></h2>
+              <RouterLink v-if="can.createDataset" :to="`/datasets/new?dataset=${ds.id}&part=${p}`" class="btn-default ml-auto text-xs"><Upload class="size-3.5" />上传新版本</RouterLink>
+            </div>
+            <p v-if="!ds[p]" class="text-sm text-gray-500">尚未上传</p>
+            <div v-else class="card overflow-x-auto">
+              <table class="table-base">
+                <thead><tr><th>版本</th><th>说明</th><th>文件 / 标注行</th><th>内容哈希</th><th>大小</th><th>发布</th><th v-if="p === 'test'">被评测基准引用</th></tr></thead>
+                <tbody>
+                  <tr v-for="v in ds[p]!.versions" :key="v.version">
+                    <td class="mono font-medium">{{ v.version }}</td>
+                    <td>{{ v.note }}</td>
+                    <td class="whitespace-nowrap">{{ fmtNum(v.files) }} / {{ fmtNum(v.rows) }}</td>
+                    <td><HashText :value="v.contentHash" /></td>
+                    <td class="whitespace-nowrap">{{ fmtBytes(v.sizeBytes) }}</td>
+                    <td class="whitespace-nowrap text-gray-500">{{ v.createdBy }} · {{ timeAgo(v.createdAt) }}</td>
+                    <td v-if="p === 'test'">
+                      <RouterLink v-for="b in benches.filter((x) => x.datasetVersion === v.version)" :key="b.id" :to="`/benchmarks/${b.id}`" class="chip mr-1 hover:border-gray-400"><Trophy class="size-3" />{{ b.name }}</RouterLink>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <Modal v-model:open="zoomOpen" :title="zoom !== null ? fileNameOf(partName, zoom, spec?.dataExt) : ''" width="max-w-3xl">
+        <div v-if="zoom !== null && part" class="space-y-4">
+          <div class="overflow-hidden rounded-lg">
+            <SynthImage :seed="seedOf(zoom)" :task="ds.task" :classes="ds.classes" annotate :width="960" :height="540" />
+          </div>
+          <div>
+            <p class="mb-1 text-xs font-medium text-gray-500">labels.csv 中对应的 {{ zoomRows.length }} 行</p>
+            <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+              <table class="table-base mono text-xs">
+                <thead><tr><th v-for="h in part.columns" :key="h">{{ h }}</th></tr></thead>
+                <tbody>
+                  <tr v-for="(r, i) in zoomRows" :key="i"><td v-for="(c, j) in r" :key="j" class="whitespace-nowrap" :class="!c ? 'text-gray-300 dark:text-gray-600' : ''">{{ c || '∅' }}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </Modal>
+    </template>
+  </StateView>
+</template>

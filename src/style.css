@@ -1,0 +1,144 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: 'Inter', 'PingFang SC', 'Microsoft YaHei', 'Source Han Sans SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Consolas', ui-monospace, monospace;
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+}
+
+:root {
+  color-scheme: light;
+  /* 图表色（参考 dataviz 校验过的分类色盘，亮/暗各一套） */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --chart-grid: #e7e5e4;
+  --chart-axis: #a8a29e;
+  --chart-surface: #ffffff;
+  /* 状态色（固定，不随主题变化；始终配图标与文字） */
+  --status-good: #0ca30c;
+  --status-critical: #d03b3b;
+  --status-neutral: #94a3b8;
+  --status-muted: #d6d3d1;
+}
+.dark {
+  color-scheme: dark;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --chart-grid: #27272a;
+  --chart-axis: #52525b;
+  --chart-surface: #111827;
+  --status-neutral: #64748b;
+  --status-muted: #44403c;
+}
+
+body {
+  @apply bg-white text-gray-800 antialiased dark:bg-gray-950 dark:text-gray-200;
+}
+
+/* ---- 通用组件类（Tailwind v4 @utility，可被 @apply 复用） ---- */
+@utility container-page {
+  @apply mx-auto w-full max-w-[1440px] px-4 sm:px-6 lg:px-8;
+}
+@utility card {
+  @apply rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900;
+}
+@utility btn {
+  @apply inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+}
+@utility btn-default {
+  @apply btn border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800;
+}
+@utility btn-primary {
+  @apply btn border-transparent bg-gray-900 text-white hover:bg-gray-700 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200;
+}
+@utility btn-brand {
+  @apply btn border-transparent bg-brand-600 text-white hover:bg-brand-700;
+}
+@utility btn-danger {
+  @apply btn border-rose-200 bg-white text-rose-600 hover:bg-rose-50 dark:border-rose-900 dark:bg-gray-900 dark:text-rose-400 dark:hover:bg-rose-950;
+}
+@utility btn-ghost {
+  @apply btn border-transparent text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800;
+}
+@utility input {
+  @apply w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100;
+}
+@utility label {
+  @apply mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300;
+}
+@utility hint {
+  @apply mt-1 text-xs text-gray-500 dark:text-gray-400;
+}
+@utility chip {
+  @apply inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300;
+}
+@utility tab {
+  @apply -mb-px inline-flex items-center gap-1.5 border-b-2 border-transparent px-3 py-2.5 text-sm whitespace-nowrap text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100;
+}
+@utility tab-active {
+  @apply border-gray-900 font-medium text-gray-900 dark:border-white dark:text-white;
+}
+@utility mono {
+  @apply font-mono text-[0.85em];
+}
+@utility section-title {
+  @apply text-lg font-semibold text-gray-900 dark:text-white;
+}
+
+.table-base {
+  @apply w-full text-left text-sm;
+}
+.table-base th {
+  @apply border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium whitespace-nowrap text-gray-500 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400;
+}
+.table-base td {
+  @apply border-b border-gray-100 px-3 py-2.5 dark:border-gray-800;
+}
+
+/* README 渲染 */
+.prose-readme {
+  @apply prose prose-sm max-w-none prose-gray dark:prose-invert;
+}
+.prose-readme h1 {
+  @apply text-2xl font-semibold;
+}
+.prose-readme h2 {
+  @apply mt-6 border-b border-gray-100 pb-1 text-lg font-semibold dark:border-gray-800;
+}
+.prose-readme :not(pre) > code {
+  @apply rounded bg-gray-100 px-1 py-0.5 font-normal before:content-none after:content-none dark:bg-gray-800;
+}
+.prose-readme pre {
+  @apply bg-gray-900 dark:bg-black/60;
+}
+.prose-readme table {
+  @apply text-sm;
+}
+
+/* 滚动条 */
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-gray-300 dark:bg-gray-700;
+}
+
+/* 标签栏等横向滚动容器：保留滚动，隐藏滚动条 */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
