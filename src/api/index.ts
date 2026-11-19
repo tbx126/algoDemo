@@ -3,7 +3,7 @@
  * 函数签名与返回结构按将来的 FastAPI REST 接口设计（注释中标注了对应路由），
  * 接入真实后端时只需把函数体替换为 fetch 调用。
  */
-import { reactive } from 'vue'
+import { reactive, watch } from 'vue'
 import type {
   Algorithm,
   AlgoVersion,
@@ -32,15 +32,47 @@ import { orgs as O0, users as U0 } from '@/mock/orgs'
 import { useSession } from '@/stores/session'
 import { fakeSha, hashStr, rng } from '@/utils/format'
 
+// ---------- 原型数据持久化 ----------
+// 写操作（新建厂商、上传数据集、编辑信息等）保存到浏览器 localStorage，刷新后仍在。
+// 恢复时就地替换 mock 数组的内容，直接引用 mock 的组件（如头像、基准名称）也能看到最新数据。
+const STORE_KEY = 'algohub-db-v1'
+const SOURCES = { algorithms: A0, datasets: D0, benchmarks: B0, evals: E0, orgs: O0, users: U0 }
+type DbKey = keyof typeof SOURCES
+try {
+  const saved = JSON.parse(localStorage.getItem(STORE_KEY) ?? 'null') as Partial<Record<DbKey, unknown[]>> | null
+  if (saved) for (const k of Object.keys(SOURCES) as DbKey[]) if (Array.isArray(saved[k])) (SOURCES[k] as unknown[]).splice(0, SOURCES[k].length, ...saved[k]!)
+} catch {
+  /* 数据损坏或不可用时使用默认 mock */
+}
+
 // 用 reactive 包一层，使 mock “写操作” 能实时反映到页面上
-const db = reactive({
-  algorithms: A0,
-  datasets: D0,
-  benchmarks: B0,
-  evals: E0,
-  orgs: O0,
-  users: U0,
-})
+const db = reactive(SOURCES)
+
+let saveTimer: ReturnType<typeof setTimeout> | undefined
+watch(
+  db,
+  () => {
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      try {
+        localStorage.setItem(STORE_KEY, JSON.stringify(db))
+      } catch {
+        /* 存储不可用时仅在内存中生效 */
+      }
+    }, 300)
+  },
+  { deep: true },
+)
+
+/** 管理后台：清除本地修改，恢复初始演示数据 */
+export function resetPrototypeData() {
+  try {
+    localStorage.removeItem(STORE_KEY)
+  } catch {
+    /* ignore */
+  }
+  location.reload()
+}
 
 const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms + Math.random() * 120))
 const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x))
@@ -488,6 +520,89 @@ export async function createVendor(input: {
     account = { username: input.account.username, tempPassword: fakeSha(input.account.username, 12) }
   }
   return clone({ org, account })
+}
+
+// ============ 管理员编辑（管理员可修改所有数据） ============
+function requireAdmin() {
+  if (!useSession().can.value.admin) throw new ApiError(403, '仅管理员可以修改')
+}
+
+// PUT /api/admin/vendors/{id} —— 修改厂商信息；修改标识时同步更新其算法、账号与评测记录
+export async function updateVendor(
+  oldId: string,
+  input: { id: string; zh_CN: string; en_US?: string; description: string; profile: Omit<VendorProfile, 'createdAt'> },
+): Promise<Org> {
+  await delay(400)
+  requireAdmin()
+  const org = db.orgs.find((o) => o.id === oldId && o.kind === 'vendor')
+  if (!org) throw new ApiError(404, '厂商不存在')
+  const newId = input.id
+  if (newId !== oldId && db.orgs.some((o) => o !== org && o.id.toLowerCase() === newId.toLowerCase())) throw new ApiError(409, '厂商标识已存在（不区分大小写）')
+  if (newId !== oldId) {
+    // 级联：算法 ID（org/name）、算法申报中的 vendor.id、评测记录、厂商账号
+    const idMap = new Map<string, string>()
+    for (const a of db.algorithms.filter((x) => x.org === oldId)) {
+      const nid = `${newId}/${a.name}`
+      idMap.set(a.id, nid)
+      a.id = nid
+      a.org = newId
+      if (a.declaration) a.declaration.packageInfo.vendor.id = newId
+    }
+    for (const r of db.evals) if (idMap.has(r.algorithmId)) r.algorithmId = idMap.get(r.algorithmId)!
+    for (const u of db.users) if (u.orgId === oldId) u.orgId = newId
+    for (const d of db.datasets) if (d.org === oldId) (d.org = newId), (d.id = `${newId}/${d.name}`)
+    org.id = newId
+    org.name = newId
+  }
+  org.displayName = input.zh_CN
+  org.enName = input.en_US || undefined
+  org.description = input.description || org.description
+  org.profile = { ...input.profile, createdAt: org.profile?.createdAt ?? new Date().toISOString() }
+  for (const a of db.algorithms) if (a.org === org.id && a.declaration) Object.assign(a.declaration.packageInfo.vendor, { zh_CN: org.displayName, en_US: org.enName })
+  return clone(org)
+}
+
+// PATCH /api/algorithms/{id}
+export async function updateAlgorithm(id: string, patch: Partial<Pick<Algorithm, 'summary' | 'tags' | 'license' | 'task' | 'framework' | 'readme'>>): Promise<Algorithm> {
+  await delay(300)
+  requireAdmin()
+  const a = db.algorithms.find((x) => x.id === id)
+  if (!a) throw new ApiError(404, '算法不存在')
+  Object.assign(a, patch, { updatedAt: new Date().toISOString() })
+  return clone(a)
+}
+
+// PATCH /api/datasets/{id}
+export async function updateDataset(id: string, patch: Partial<Pick<Dataset, 'summary' | 'tags' | 'classes' | 'readme'>>): Promise<Dataset> {
+  await delay(300)
+  requireAdmin()
+  const d = db.datasets.find((x) => x.id === id)
+  if (!d) throw new ApiError(404, '数据集不存在')
+  Object.assign(d, patch, { updatedAt: new Date().toISOString() })
+  return clone(d)
+}
+
+// PATCH /api/benchmarks/{id}
+export async function updateBenchmark(id: string, patch: Partial<Pick<Benchmark, 'displayName' | 'description' | 'metrics' | 'datasetVersion'>>): Promise<Benchmark> {
+  await delay(300)
+  requireAdmin()
+  const b = db.benchmarks.find((x) => x.id === id)
+  if (!b) throw new ApiError(404, '评测基准不存在')
+  Object.assign(b, patch)
+  return clone(b)
+}
+
+// PATCH /api/admin/users/{id}
+export async function updateUser(id: string, patch: Partial<Pick<User, 'displayName' | 'email' | 'role' | 'orgId'>>): Promise<User> {
+  await delay(300)
+  requireAdmin()
+  const u = db.users.find((x) => x.id === id)
+  if (!u) throw new ApiError(404, '用户不存在')
+  const next = { ...u, ...patch }
+  if (next.role === 'vendor' && !next.orgId) throw new ApiError(400, '厂商账号必须选择所属厂商')
+  if (next.role !== 'vendor') next.orgId = null
+  Object.assign(u, next)
+  return clone(u)
 }
 
 export async function setUserActive(id: string, active: boolean): Promise<void> {

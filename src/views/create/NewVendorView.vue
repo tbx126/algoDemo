@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Building2, CircleAlert, CircleCheck, CircleDashed } from 'lucide-vue-next'
-import { ApiError, createVendor } from '@/api'
+import { ApiError, createVendor, getOrg, updateVendor } from '@/api'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
 import { COMPANY_STATUS, COMPANY_TYPES, CREDIT_CODE_RE, byteLen, type Necessity } from '@/utils/standard'
@@ -15,9 +15,14 @@ import FileSlot from '@/components/form/FileSlot.vue'
 import NecessityBadge from '@/components/form/NecessityBadge.vue'
 
 type FileV = { name: string; size: number } | null
+const route = useRoute()
 const router = useRouter()
 const { can } = useSession()
 const touched = ref(false)
+/** 编辑模式：/vendors/:id/edit */
+const editId = computed(() => (route.params.id as string | undefined) ?? '')
+const isEdit = computed(() => !!editId.value)
+const loadingEdit = ref(false)
 
 const f = reactive({
   // packageinfo.xml 中的厂商参数
@@ -42,8 +47,40 @@ const f = reactive({
   account: { username: '', email: '' },
 })
 
-// 切换“暂无相关行业资质”时清空已上传文件，避免证书被当作情况说明
-watch(() => f.noCert, () => (f.certFile = null))
+// 切换“暂无相关行业资质”时清空已上传文件，避免证书被当作情况说明（载入已有数据时除外）
+watch(
+  () => f.noCert,
+  () => {
+    if (!loadingEdit.value) f.certFile = null
+  },
+)
+
+// ---------- 编辑模式：载入已有厂商信息 ----------
+const asFile = (name?: string): FileV => (name ? { name, size: 0 } : null)
+onMounted(async () => {
+  if (!isEdit.value) return
+  loadingEdit.value = true
+  try {
+    const o = await getOrg(editId.value)
+    const p = o.profile
+    Object.assign(f, { vendorId: o.id, zh: o.displayName, en: o.enName ?? '', description: o.description, openAccount: false })
+    if (p) {
+      Object.assign(f.company, { ...p.company, license: asFile(p.company.licenseFile) })
+      Object.assign(f.contact, p.contact)
+      Object.assign(f.liaison, p.liaison)
+      f.noCert = !!p.qualification?.noQualification
+      f.certFile = asFile(p.qualification?.file)
+      f.copyrightFile = asFile(p.copyrightFile)
+      f.patentFile = asFile(p.patentFile)
+      f.otherIpFile = asFile(p.otherIpFile)
+    }
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : '载入失败', 'error')
+  } finally {
+    // 等 noCert 的 watch 执行完再解除
+    setTimeout(() => (loadingEdit.value = false))
+  }
+})
 
 // ---------- 校验 ----------
 const errors = computed(() => {
@@ -79,7 +116,8 @@ const status = computed<{ key: string; name: string; necessity: Necessity; ok: b
 // 必须项全部完成；资质证书“有则提供，无则须提交情况说明”，因此也作为提交门槛
 const blocking = computed(() => status.value.filter((s) => s.necessity === 'required' && !s.ok).concat(status.value.filter((s) => s.key === 'cert' && !s.ok)))
 const accountOk = computed(() => !f.openAccount || (!errors.value.username && !!f.account.email))
-const canSubmit = computed(() => !blocking.value.length && accountOk.value)
+// 编辑时只要求厂商标识有效（管理员可分步补全申报材料）；新建时必须完成必须项
+const canSubmit = computed(() => (isEdit.value ? !errors.value.vendorId && !errors.value.zh : !blocking.value.length && accountOk.value))
 
 function scrollTo(key: string) {
   document.getElementById('sec-' + key)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -91,14 +129,15 @@ const done = ref<{ id: string; account?: { username: string; tempPassword: strin
 async function submit() {
   touched.value = true
   if (!canSubmit.value) {
-    toast(`还有 ${blocking.value.length + (accountOk.value ? 0 : 1)} 项未完成`, 'error')
-    if (blocking.value[0]) scrollTo(blocking.value[0].key)
+    toast(isEdit.value ? '请检查厂商标识与中文名称' : `还有 ${blocking.value.length + (accountOk.value ? 0 : 1)} 项未完成`, 'error')
+    if (isEdit.value) scrollTo('base')
+    else if (blocking.value[0]) scrollTo(blocking.value[0].key)
     return
   }
   submitting.value = true
   try {
     const fileName = (x: FileV) => x?.name
-    const r = await createVendor({
+    const payload = {
       id: f.vendorId,
       zh_CN: f.zh.trim(),
       en_US: f.en.trim() || undefined,
@@ -112,11 +151,17 @@ async function submit() {
         patentFile: fileName(f.patentFile),
         otherIpFile: fileName(f.otherIpFile),
       },
-      account: f.openAccount ? { ...f.account } : undefined,
-    })
+    }
+    if (isEdit.value) {
+      const o = await updateVendor(editId.value, payload)
+      toast('厂商信息已保存')
+      router.push(`/orgs/${o.id}`)
+      return
+    }
+    const r = await createVendor({ ...payload, account: f.openAccount ? { ...f.account } : undefined })
     done.value = { id: r.org.id, account: r.account }
   } catch (e) {
-    toast(e instanceof ApiError ? e.message : '创建失败', 'error')
+    toast(e instanceof ApiError ? e.message : isEdit.value ? '保存失败' : '创建失败', 'error')
   } finally {
     submitting.value = false
   }
@@ -130,14 +175,14 @@ function onDoneOpen(v: boolean) {
 
 <template>
   <div class="container-page max-w-6xl pt-8">
-    <h1 class="flex items-center gap-2 text-2xl font-semibold text-gray-900 dark:text-white"><Building2 class="size-6 text-brand-600" />新建厂商</h1>
+    <h1 class="flex items-center gap-2 text-2xl font-semibold text-gray-900 dark:text-white"><Building2 class="size-6 text-brand-600" />{{ isEdit ? '编辑厂商' : '新建厂商' }}</h1>
     <p class="mt-1 text-sm text-gray-500">按《智能运维平台算法中心算法标准 1.0》第四部分“算法厂商提供材料清单”完成入库申报。纸质材料需加盖企业公章，电子版为清晰扫描件。</p>
 
-    <StateView v-if="!can.admin" :error="{ status: 403, message: '仅管理员可以新建厂商' }" />
+    <StateView v-if="!can.admin" :error="{ status: 403, message: isEdit ? '仅管理员可以修改厂商信息' : '仅管理员可以新建厂商' }" />
     <div v-else class="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start">
       <form class="card min-w-0 flex-1 space-y-6 p-6" novalidate @submit.prevent="submit">
         <!-- 厂商标识 -->
-        <FormSection id="sec-base" title="厂商标识" necessity="required" source="A.1 packageinfo.xml · vendor.*" desc="写入算法包描述文件，算法提交时自动带出，创建后不可修改。">
+        <FormSection id="sec-base" title="厂商标识" necessity="required" source="A.1 packageinfo.xml · vendor.*" :desc="isEdit ? '写入算法包描述文件。修改厂商标识会同步更新该厂商下所有算法的 ID、评测记录与厂商账号。' : '写入算法包描述文件，算法提交时自动带出。'">
           <div class="grid gap-4 sm:grid-cols-3">
             <TextField v-model.trim="f.vendorId" label="厂商标识" field="vendor.id" required mono hint="字母开头，可含大小写字母、数字、_ 与 -；不区分大小写判重" :touched="touched || !!f.vendorId" :error="errors.vendorId" />
             <TextField v-model="f.zh" label="中文名称" field="vendor.zh_CN" required :max-bytes="50" :touched="touched" :error="errors.zh" />
@@ -232,7 +277,7 @@ function onDoneOpen(v: boolean) {
         </FormSection>
 
         <!-- 账号 -->
-        <FormSection id="sec-account" title="开通厂商账号" desc="账号归属该厂商，用于提交算法与查看自己的评测结果。也可稍后在“管理 → 用户与账号”中添加。">
+        <FormSection v-if="!isEdit" id="sec-account" title="开通厂商账号" desc="账号归属该厂商，用于提交算法与查看自己的评测结果。也可稍后在“管理 → 用户与账号”中添加。">
           <label class="flex items-center gap-2 text-sm"><input v-model="f.openAccount" type="checkbox" class="size-4 accent-brand-600" />同时为对接人开通厂商账号</label>
           <div v-if="f.openAccount" class="grid gap-4 sm:grid-cols-2">
             <TextField v-model.trim="f.account.username" label="用户名" required mono :touched="touched || !!f.account.username" :error="errors.username" />
@@ -245,7 +290,7 @@ function onDoneOpen(v: boolean) {
       <aside class="w-full shrink-0 lg:sticky lg:top-20 lg:w-72">
         <div class="card p-4">
           <h2 class="text-sm font-semibold">申报材料完整度</h2>
-          <p class="mt-0.5 text-xs text-gray-500">必须项与资质证书（或情况说明）完成后可提交</p>
+          <p class="mt-0.5 text-xs text-gray-500">{{ isEdit ? '编辑时可分步补全；厂商标识与中文名称有效即可保存' : '必须项与资质证书（或情况说明）完成后可提交' }}</p>
           <ul class="mt-3 space-y-1">
             <li v-for="s in status" :key="s.key">
               <button type="button" class="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-800" @click="scrollTo(s.key)">
@@ -257,7 +302,7 @@ function onDoneOpen(v: boolean) {
               </button>
             </li>
           </ul>
-          <button type="button" class="btn-brand mt-4 w-full" :disabled="submitting" @click="submit">{{ submitting ? '提交中…' : '创建厂商' }}</button>
+          <button type="button" class="btn-brand mt-4 w-full" :disabled="submitting" @click="submit">{{ submitting ? (isEdit ? '保存中…' : '提交中…') : isEdit ? '保存修改' : '创建厂商' }}</button>
           <button type="button" class="btn-default mt-2 w-full" @click="router.back()">取消</button>
         </div>
       </aside>

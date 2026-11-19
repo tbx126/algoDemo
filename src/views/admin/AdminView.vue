@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Building2, ClipboardCheck, ShieldCheck, UserPlus, Users } from 'lucide-vue-next'
-import { ApiError, createUser, listOrgs, listReviewQueue, listUsers, reviewVersion, setUserActive } from '@/api'
+import { Building2, ClipboardCheck, Pencil, RotateCcw, ShieldCheck, UserPlus, Users } from 'lucide-vue-next'
+import { ApiError, createUser, listOrgs, listReviewQueue, listUsers, resetPrototypeData, reviewVersion, setUserActive, updateUser } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
 import { ROLES, TASKS } from '@/utils/meta'
 import { fmtBytes, fmtDate, timeAgo } from '@/utils/format'
-import type { Role } from '@/types'
+import type { Role, User } from '@/types'
 import StateView from '@/components/ui/StateView.vue'
 import OrgAvatar from '@/components/ui/OrgAvatar.vue'
 import Modal from '@/components/ui/Modal.vue'
@@ -47,6 +47,29 @@ function closeCreate(v: boolean) {
     Object.assign(nu, { username: '', displayName: '', email: '', role: 'vendor', orgId: 'partner-xyz' })
   }
 }
+// ---- 编辑用户 ----
+const editing = ref<User | null>(null)
+const eu = reactive({ displayName: '', email: '', role: 'vendor' as Role, orgId: '' })
+const editOpen = computed({ get: () => !!editing.value, set: (v) => !v && (editing.value = null) })
+function openEdit(u: User) {
+  editing.value = u
+  Object.assign(eu, { displayName: u.displayName, email: u.email, role: u.role, orgId: u.orgId ?? vendors.value[0]?.id ?? '' })
+}
+async function saveEdit() {
+  if (!editing.value) return
+  try {
+    await updateUser(editing.value.id, { displayName: eu.displayName.trim(), email: eu.email.trim(), role: eu.role, orgId: eu.role === 'vendor' ? eu.orgId : null })
+    toast('账号信息已保存')
+    editing.value = null
+    reloadUsers()
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : '保存失败', 'error')
+  }
+}
+
+// ---- 重置演示数据 ----
+const resetOpen = ref(false)
+
 async function toggleActive(id: string, active: boolean) {
   await setUserActive(id, active)
   toast(active ? '账号已启用' : '账号已停用', 'info')
@@ -85,7 +108,8 @@ async function review(algoId: string, version: string, approve: boolean) {
         <div class="mb-3 flex flex-wrap items-center gap-3">
           <input v-model="userQ" class="input w-64" placeholder="搜索用户名 / 姓名" aria-label="搜索用户" />
           <p class="text-sm text-gray-500">平台不开放注册：厂商与演示账号均由管理员创建。</p>
-          <button class="btn-primary ml-auto" @click="createOpen = true"><UserPlus class="size-4" />新建账号</button>
+          <button class="btn-default ml-auto" title="清除本浏览器中保存的修改，恢复初始演示数据" @click="resetOpen = true"><RotateCcw class="size-4" />重置演示数据</button>
+          <button class="btn-primary" @click="createOpen = true"><UserPlus class="size-4" />新建账号</button>
         </div>
         <StateView :loading="!users">
           <div class="card overflow-x-auto">
@@ -99,7 +123,7 @@ async function review(algoId: string, version: string, approve: boolean) {
                   <td><span v-if="u.orgId" class="flex items-center gap-1.5"><OrgAvatar :org="u.orgId" :size="16" />{{ orgName(u.orgId) }}</span><span v-else class="text-xs text-gray-400">不属于任何组织</span></td>
                   <td class="whitespace-nowrap text-gray-500">{{ u.lastLoginAt ? timeAgo(u.lastLoginAt) : '从未登录' }}</td>
                   <td>{{ u.active ? '启用' : '已停用' }}</td>
-                  <td class="text-right"><button class="btn-ghost px-2 py-1 text-xs" @click="toggleActive(u.id, !u.active)">{{ u.active ? '停用' : '启用' }}</button></td>
+                  <td class="text-right whitespace-nowrap"><button class="btn-ghost px-2 py-1 text-xs" @click="openEdit(u)"><Pencil class="size-3.5" />编辑</button><button class="btn-ghost px-2 py-1 text-xs" @click="toggleActive(u.id, !u.active)">{{ u.active ? '停用' : '启用' }}</button></td>
                 </tr>
               </tbody>
             </table>
@@ -150,16 +174,55 @@ async function review(algoId: string, version: string, approve: boolean) {
           <RouterLink to="/vendors/new" class="btn-primary ml-auto"><Building2 class="size-4" />新建厂商</RouterLink>
         </div>
         <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          <RouterLink v-for="o in vendors" :key="o.id" :to="`/orgs/${o.id}`" class="card flex gap-3 p-4 hover:border-gray-300 dark:hover:border-gray-700">
+          <div v-for="o in vendors" :key="o.id" class="card flex gap-3 p-4">
             <OrgAvatar :org="o.id" :size="40" />
-            <div class="min-w-0">
+            <div class="min-w-0 flex-1">
               <p class="font-medium">{{ o.displayName }} <span v-if="o.enName" class="text-xs font-normal text-gray-500">{{ o.enName }}</span></p>
               <p class="mono text-xs text-gray-500">vendor.id = {{ o.id }} · {{ (users ?? []).filter((u) => u.orgId === o.id).length }} 个账号</p>
               <p class="mt-1 line-clamp-2 text-sm text-gray-600 dark:text-gray-400">{{ o.description }}</p>
+              <div class="mt-2 flex gap-2">
+                <RouterLink :to="`/orgs/${o.id}`" class="btn-default py-1 text-xs">查看</RouterLink>
+                <RouterLink :to="`/vendors/${o.id}/edit`" class="btn-default py-1 text-xs"><Pencil class="size-3.5" />编辑</RouterLink>
+              </div>
             </div>
-          </RouterLink>
+          </div>
         </div>
       </div>
+
+      <Modal v-model:open="editOpen" :title="`编辑账号 @${editing?.username ?? ''}`">
+        <form id="eu-form" class="space-y-3" @submit.prevent="saveEdit">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div><label class="label" for="eu-d">姓名</label><input id="eu-d" v-model="eu.displayName" class="input" required /></div>
+            <div><label class="label" for="eu-e">邮箱</label><input id="eu-e" v-model.trim="eu.email" type="email" class="input" required /></div>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label class="label" for="eu-r">角色</label>
+              <select id="eu-r" v-model="eu.role" class="input">
+                <option v-for="(v, k) in ROLES" :key="k" :value="k">{{ v.label }}</option>
+              </select>
+            </div>
+            <div v-if="eu.role === 'vendor'">
+              <label class="label" for="eu-o">所属厂商</label>
+              <select id="eu-o" v-model="eu.orgId" class="input" required>
+                <option v-for="o in vendors" :key="o.id" :value="o.id">{{ o.displayName }}</option>
+              </select>
+            </div>
+            <p v-else class="self-end pb-2 text-xs text-gray-500">{{ ROLES[eu.role].label }}不属于任何组织</p>
+          </div>
+        </form>
+        <template #footer>
+          <button class="btn-default" @click="editing = null">取消</button>
+          <button type="submit" form="eu-form" class="btn-brand">保存</button>
+        </template>
+      </Modal>
+
+      <Modal v-model:open="resetOpen" title="重置演示数据" description="原型中的新建与修改保存在本浏览器里。重置会清除这些修改并恢复初始演示数据，无法撤销。">
+        <template #footer>
+          <button class="btn-default" @click="resetOpen = false">取消</button>
+          <button class="btn-danger" @click="resetPrototypeData()">确认重置</button>
+        </template>
+      </Modal>
 
       <Modal :open="createOpen" title="新建账号" description="账号创建后，将临时密码通过线下渠道告知用户，首次登录强制修改。" @update:open="closeCreate">
         <div v-if="created" class="space-y-3 text-sm">

@@ -19,6 +19,7 @@ export const router = createRouter({
     { path: '/evals/new', name: 'eval-new', component: () => import('@/views/eval/NewEvalView.vue') },
     { path: '/evals/:id', name: 'eval', component: () => import('@/views/eval/EvalDetailView.vue') },
     { path: '/vendors/new', name: 'vendor-new', component: () => import('@/views/create/NewVendorView.vue') },
+    { path: '/vendors/:id/edit', name: 'vendor-edit', component: () => import('@/views/create/NewVendorView.vue') },
     { path: '/orgs/:id', name: 'org', component: () => import('@/views/org/OrgView.vue') },
     { path: '/admin/:tab?', name: 'admin', component: () => import('@/views/admin/AdminView.vue') },
     { path: '/:pathMatch(.*)*', name: '404', component: () => import('@/views/NotFoundView.vue') },

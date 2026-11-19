@@ -17,7 +17,7 @@ function pick(f?: File) {
     <template v-if="model">
       <CircleCheck class="size-4 shrink-0 text-emerald-500" />
       <span class="mono min-w-0 truncate text-xs">{{ model.name }}</span>
-      <span class="shrink-0 text-[11px] text-gray-400">{{ fmtBytes(model.size) }}</span>
+      <span v-if="model.size" class="shrink-0 text-[11px] text-gray-400">{{ fmtBytes(model.size) }}</span>
       <button type="button" class="btn-ghost shrink-0 px-1 py-0.5" aria-label="移除文件" @click="model = null"><X class="size-3.5" /></button>
     </template>
     <template v-else>

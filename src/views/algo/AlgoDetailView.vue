@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { BookOpen, ClipboardList, ExternalLink, FileCode, FileCog, FileText, FlaskConical, FolderTree, Heart, HardDrive, ScrollText, Trophy, Weight } from 'lucide-vue-next'
+import { BookOpen, ClipboardList, Pencil, ExternalLink, FileCode, FileCog, FileText, FlaskConical, FolderTree, Heart, HardDrive, ScrollText, Trophy, Weight } from 'lucide-vue-next'
 import { getAlgorithm, listBenchmarks, listEvals } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
@@ -14,6 +14,7 @@ import StatusBadge from '@/components/ui/StatusBadge.vue'
 import HashText from '@/components/ui/HashText.vue'
 import MarkdownView from '@/components/ui/MarkdownView.vue'
 import Modal from '@/components/ui/Modal.vue'
+import EditAlgorithmModal from '@/components/admin/EditAlgorithmModal.vue'
 import InferenceWidget from '@/components/algo/InferenceWidget.vue'
 import EvalTable from '@/components/benchmark/EvalTable.vue'
 import DeclarationView from '@/components/algo/DeclarationView.vue'
@@ -26,6 +27,7 @@ const tab = computed(() => (route.query.tab as string) || 'card')
 const setTab = (t: string) => router.replace({ query: t === 'card' ? {} : { tab: t } })
 
 const { data: algo, loading, error } = useAsync(() => getAlgorithm(id.value))
+const editOpen = ref(false)
 const { data: runs } = useAsync(() => listEvals({ algorithmId: id.value }))
 const { data: benches } = useAsync(() => listBenchmarks())
 
@@ -65,6 +67,7 @@ const totalSize = computed(() => algo.value?.files.reduce((s, f) => s + f.size, 
             <button class="btn-default ml-1 px-2 py-0.5 text-xs" :aria-pressed="liked" @click="liked = !liked">
               <Heart class="size-3.5" :class="liked ? 'fill-rose-500 text-rose-500' : ''" />{{ algo.likes + (liked ? 1 : 0) }}
             </button>
+            <button v-if="can.admin" class="btn-default ml-auto text-sm" @click="editOpen = true"><Pencil class="size-4" />编辑</button>
           </div>
           <div class="mt-3 flex flex-wrap items-center gap-1.5">
             <TaskBadge :task="algo.task" />
@@ -212,6 +215,7 @@ const totalSize = computed(() => algo.value?.files.reduce((s, f) => s + f.size, 
           <p v-if="logOf.reviewNote" class="text-sm">审核备注：{{ logOf.reviewNote }}</p>
         </div>
       </Modal>
+      <EditAlgorithmModal v-model:open="editOpen" :algo="algo" @saved="algo = $event" />
     </template>
   </StateView>
 </template>

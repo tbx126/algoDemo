@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowDown, ArrowUp, Database, FlaskConical, Lock, Trophy, X, Table2, ChartScatter } from 'lucide-vue-next'
+import { ArrowDown, ArrowUp, Database, FlaskConical, Lock, Pencil, Trophy, X, Table2, ChartScatter } from 'lucide-vue-next'
 import { getBenchmark, getLeaderboard, listEvals } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { fmtDate, fmtMetric, timeAgo } from '@/utils/format'
 import StateView from '@/components/ui/StateView.vue'
+import EditBenchmarkModal from '@/components/admin/EditBenchmarkModal.vue'
 import TaskBadge from '@/components/ui/TaskBadge.vue'
 import OrgAvatar from '@/components/ui/OrgAvatar.vue'
 import EvalTable from '@/components/benchmark/EvalTable.vue'
@@ -18,6 +19,7 @@ const route = useRoute()
 const { can } = useSession()
 const id = computed(() => route.params.id as string)
 const { data: b, loading, error } = useAsync(() => getBenchmark(id.value))
+const editOpen = ref(false)
 const { data: rows } = useAsync(() => getLeaderboard(id.value))
 const { data: runs } = useAsync(() => listEvals({ benchmarkId: id.value }))
 
@@ -83,7 +85,10 @@ const scatterPts = computed(() =>
                 <span class="chip"><Lock class="size-3" />GT 仅平台可见</span>
               </div>
             </div>
-            <RouterLink v-if="can.runEval" :to="`/evals/new?bench=${b.id}`" class="btn-primary"><FlaskConical class="size-4" />提交评测</RouterLink>
+            <div class="flex gap-2">
+              <button v-if="can.admin" class="btn-default" @click="editOpen = true"><Pencil class="size-4" />编辑</button>
+              <RouterLink v-if="can.runEval" :to="`/evals/new?bench=${b.id}`" class="btn-primary"><FlaskConical class="size-4" />提交评测</RouterLink>
+            </div>
           </div>
           <div class="mt-5 flex gap-1 no-scrollbar overflow-x-auto overflow-y-hidden">
             <button class="tab" :class="{ 'tab-active': tab === 'board' }" @click="tab = 'board'"><Table2 class="size-4" />排行榜</button>
@@ -189,6 +194,7 @@ const scatterPts = computed(() =>
           </div>
         </div>
       </div>
+      <EditBenchmarkModal v-model:open="editOpen" :b="b" @saved="b = $event" />
     </template>
   </StateView>
 </template>

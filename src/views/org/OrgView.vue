@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { Box, Database, FileBadge, Users } from 'lucide-vue-next'
+import { Box, Database, FileBadge, Pencil, Users } from 'lucide-vue-next'
 import { getOrg, listAlgorithms, listDatasets, listUsers } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
@@ -33,6 +33,7 @@ const tab = ref<'algos' | 'datasets'>('algos')
           <p class="mono text-sm text-gray-500">{{ org.name }}</p>
           <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">{{ org.description }}</p>
         </div>
+        <RouterLink v-if="can.admin && org.kind === 'vendor'" :to="`/vendors/${org.id}/edit`" class="btn-default ml-auto"><Pencil class="size-4" />编辑厂商信息</RouterLink>
       </div>
 
       <div class="mt-8 flex flex-col gap-8 lg:flex-row">
@@ -61,6 +62,7 @@ const tab = ref<'algos' | 'datasets'>('algos')
             </template>
             <p v-else class="text-sm text-gray-500">仅本厂商与管理员可查看</p>
           </div>
+          <div v-if="can.admin && org.kind === 'vendor' && !org.profile" class="card mt-4 p-4 text-sm text-gray-600 dark:text-gray-400">尚未填写入库申报信息。<RouterLink :to="`/vendors/${org.id}/edit`" class="text-brand-600 hover:underline">去补充</RouterLink></div>
           <div v-if="can.admin && org.profile" class="card mt-4 space-y-3 p-4 text-sm">
             <h3 class="flex items-center gap-1.5 font-semibold"><FileBadge class="size-4" />入库申报信息</h3>
             <div><p class="text-xs text-gray-500">企业全称</p><p>{{ org.profile.company.fullName }}</p></div>

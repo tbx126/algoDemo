@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { BookOpen, Download, Eye, EyeOff, FlaskConical, GitCommitVertical, Heart, Lock, Table2, Trophy, Upload } from 'lucide-vue-next'
+import { BookOpen, Download, Pencil, Eye, EyeOff, FlaskConical, GitCommitVertical, Heart, Lock, Table2, Trophy, Upload } from 'lucide-vue-next'
 import { getDataset, listBenchmarks } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
@@ -16,6 +16,7 @@ import HashText from '@/components/ui/HashText.vue'
 import MarkdownView from '@/components/ui/MarkdownView.vue'
 import SynthImage from '@/components/ui/SynthImage.vue'
 import Modal from '@/components/ui/Modal.vue'
+import EditDatasetModal from '@/components/admin/EditDatasetModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -25,6 +26,7 @@ const tab = computed(() => (route.query.tab as string) || 'card')
 const setTab = (t: string) => router.replace({ query: t === 'card' ? {} : { tab: t } })
 
 const { data: ds, loading, error } = useAsync(() => getDataset(id.value))
+const editOpen = ref(false)
 const { data: allBench } = useAsync(() => listBenchmarks())
 const benches = computed(() => allBench.value?.filter((b) => b.datasetId === id.value) ?? [])
 const liked = ref(false)
@@ -77,7 +79,8 @@ function download(p: SplitName) {
             <button class="btn-default ml-1 px-2 py-0.5 text-xs" :aria-pressed="liked" @click="liked = !liked">
               <Heart class="size-3.5" :class="liked ? 'fill-rose-500 text-rose-500' : ''" />{{ ds.likes + (liked ? 1 : 0) }}
             </button>
-            <RouterLink v-if="can.createDataset" :to="`/datasets/new?dataset=${ds.id}`" class="btn-default ml-auto text-sm"><Upload class="size-4" />上传新版本</RouterLink>
+            <button v-if="can.admin" class="btn-default ml-auto text-sm" @click="editOpen = true"><Pencil class="size-4" />编辑</button>
+            <RouterLink v-if="can.createDataset" :to="`/datasets/new?dataset=${ds.id}`" class="btn-default text-sm" :class="{ 'ml-auto': !can.admin }"><Upload class="size-4" />上传新版本</RouterLink>
           </div>
           <div class="mt-3 flex flex-wrap items-center gap-1.5">
             <TaskBadge :task="ds.task" />
@@ -271,6 +274,7 @@ function download(p: SplitName) {
           </div>
         </div>
       </Modal>
+      <EditDatasetModal v-model:open="editOpen" :ds="ds" @saved="ds = $event" />
     </template>
   </StateView>
 </template>
