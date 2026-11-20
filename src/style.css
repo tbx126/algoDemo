@@ -106,24 +106,91 @@ body {
   @apply border-b border-gray-100 px-3 py-2.5 dark:border-gray-800;
 }
 
-/* README 渲染 */
+/* README 渲染：正文偏灰、行距宽松，标题与强调为深色，代码块浅灰底 */
 .prose-readme {
-  @apply prose prose-sm max-w-none prose-gray dark:prose-invert;
+  @apply max-w-none text-[15px] leading-[1.85] text-gray-600 dark:text-gray-300;
+}
+.prose-readme > * + * {
+  @apply mt-4;
 }
 .prose-readme h1 {
-  @apply text-2xl font-semibold;
+  @apply mb-2 text-[26px] leading-tight font-bold tracking-tight text-gray-900 dark:text-white;
 }
 .prose-readme h2 {
-  @apply mt-6 border-b border-gray-100 pb-1 text-lg font-semibold dark:border-gray-800;
+  @apply mt-10 mb-3 scroll-mt-20 text-xl font-semibold text-gray-900 dark:text-white;
+}
+.prose-readme h3 {
+  @apply mt-7 mb-2 scroll-mt-20 text-base font-semibold text-gray-900 dark:text-white;
+}
+.prose-readme p {
+  @apply my-3;
+}
+.prose-readme strong {
+  @apply font-semibold text-gray-900 dark:text-white;
+}
+.prose-readme a {
+  @apply text-gray-900 underline decoration-gray-400 underline-offset-2 hover:decoration-gray-900 dark:text-white dark:decoration-gray-500 dark:hover:decoration-white;
+}
+.prose-readme ul {
+  @apply my-3 list-disc space-y-2 pl-6 marker:text-gray-300 dark:marker:text-gray-600;
+}
+.prose-readme ol {
+  @apply my-3 list-decimal space-y-2 pl-6 marker:text-gray-400;
+}
+.prose-readme li > p {
+  @apply my-1;
+}
+.prose-readme blockquote {
+  @apply my-4 rounded-r-lg border-l-4 border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-900/60 dark:text-gray-400;
+}
+.prose-readme blockquote p {
+  @apply my-1;
+}
+.prose-readme hr {
+  @apply my-8 border-gray-100 dark:border-gray-800;
 }
 .prose-readme :not(pre) > code {
-  @apply rounded bg-gray-100 px-1 py-0.5 font-normal before:content-none after:content-none dark:bg-gray-800;
+  @apply rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-[0.85em] text-gray-800 dark:bg-gray-800 dark:text-gray-200;
 }
-.prose-readme pre {
-  @apply bg-gray-900 dark:bg-black/60;
+.prose-readme pre.code-block {
+  @apply relative my-5 overflow-x-auto rounded-xl bg-gray-50 px-5 py-4 font-mono text-[13px] leading-relaxed text-gray-800 dark:bg-gray-900 dark:text-gray-200;
+}
+.prose-readme pre.code-block .code-lang {
+  @apply absolute top-2 right-3 text-[11px] text-gray-400 select-none;
+}
+.prose-readme pre code {
+  @apply bg-transparent p-0 whitespace-pre;
 }
 .prose-readme table {
-  @apply text-sm;
+  @apply my-5 block w-full overflow-x-auto text-sm;
+}
+.prose-readme thead th {
+  @apply border-b border-gray-200 px-3 py-2 text-left font-semibold whitespace-nowrap text-gray-900 dark:border-gray-700 dark:text-white;
+}
+.prose-readme tbody td {
+  @apply border-b border-gray-100 px-3 py-2 align-top dark:border-gray-800;
+}
+.prose-readme tbody tr:last-child td {
+  @apply border-b-0;
+}
+/* 代码高亮配色（亮 / 暗） */
+.prose-readme .tk-key {
+  @apply text-sky-700 dark:text-sky-300;
+}
+.prose-readme .tk-str {
+  @apply text-emerald-700 dark:text-emerald-300;
+}
+.prose-readme .tk-num {
+  @apply text-amber-700 dark:text-amber-300;
+}
+.prose-readme .tk-kw {
+  @apply text-fuchsia-700 dark:text-fuchsia-300;
+}
+.prose-readme .tk-fn {
+  @apply text-orange-700 dark:text-orange-300;
+}
+.prose-readme .tk-com {
+  @apply text-gray-400 italic;
 }
 
 /* 滚动条 */

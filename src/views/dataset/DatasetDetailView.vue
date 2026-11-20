@@ -14,6 +14,8 @@ import OrgAvatar from '@/components/ui/OrgAvatar.vue'
 import TaskBadge from '@/components/ui/TaskBadge.vue'
 import HashText from '@/components/ui/HashText.vue'
 import MarkdownView from '@/components/ui/MarkdownView.vue'
+import DocOutline from '@/components/ui/DocOutline.vue'
+import type { TocItem } from '@/utils/markdown'
 import SynthImage from '@/components/ui/SynthImage.vue'
 import Modal from '@/components/ui/Modal.vue'
 import EditDatasetModal from '@/components/admin/EditDatasetModal.vue'
@@ -27,6 +29,7 @@ const setTab = (t: string) => router.replace({ query: t === 'card' ? {} : { tab:
 
 const { data: ds, loading, error } = useAsync(() => getDataset(id.value))
 const editOpen = ref(false)
+const toc = ref<TocItem[]>([])
 const { data: allBench } = useAsync(() => listBenchmarks())
 const benches = computed(() => allBench.value?.filter((b) => b.datasetId === id.value) ?? [])
 const liked = ref(false)
@@ -100,6 +103,9 @@ function download(p: SplitName) {
       <div class="container-page pt-6">
         <!-- ========== 卡片 ========== -->
         <div v-if="tab === 'card'" class="flex flex-col gap-8 lg:flex-row">
+          <aside class="hidden w-52 shrink-0 xl:block">
+            <div class="sticky top-20"><DocOutline :items="toc" /></div>
+          </aside>
           <div class="min-w-0 flex-1">
             <div class="mb-6 overflow-hidden rounded-xl border border-gray-100 dark:border-gray-800">
               <div class="flex items-center justify-between border-b border-gray-100 px-3 py-2 text-sm dark:border-gray-800">
@@ -112,7 +118,7 @@ function download(p: SplitName) {
                 </div>
               </div>
             </div>
-            <MarkdownView :source="ds.readme" />
+            <MarkdownView :source="ds.readme" @toc="toc = $event" />
           </div>
           <aside class="w-full shrink-0 space-y-5 lg:w-[360px]">
             <div class="card divide-y divide-gray-100 dark:divide-gray-800">

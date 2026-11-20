@@ -14,6 +14,8 @@ import TaskBadge from '@/components/ui/TaskBadge.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import HashText from '@/components/ui/HashText.vue'
 import MarkdownView from '@/components/ui/MarkdownView.vue'
+import DocOutline from '@/components/ui/DocOutline.vue'
+import type { TocItem } from '@/utils/markdown'
 import Modal from '@/components/ui/Modal.vue'
 import EditAlgorithmModal from '@/components/admin/EditAlgorithmModal.vue'
 import InferenceWidget from '@/components/algo/InferenceWidget.vue'
@@ -30,6 +32,7 @@ const setTab = (t: string) => router.replace({ query: t === 'card' ? {} : { tab:
 const { data: algo, loading, error } = useAsync(() => getAlgorithm(id.value))
 const orgName = (oid: string) => orgs.find((o) => o.id === oid)?.displayName ?? oid
 const editOpen = ref(false)
+const toc = ref<TocItem[]>([])
 const { data: runs } = useAsync(() => listEvals({ algorithmId: id.value }))
 const { data: benches } = useAsync(() => listBenchmarks())
 
@@ -74,7 +77,6 @@ const totalSize = computed(() => algo.value?.files.reduce((s, f) => s + f.size, 
           <div class="mt-3 flex flex-wrap items-center gap-1.5">
             <TaskBadge :task="algo.task" />
             <span class="chip">{{ algo.framework }}</span>
-            <span class="chip">许可证：{{ algo.license }}</span>
             <span v-for="t in algo.tags" :key="t" class="chip">{{ t }}</span>
             <a v-if="algo.paperUrl" :href="algo.paperUrl" target="_blank" rel="noopener" class="chip hover:border-gray-400"><BookOpen class="size-3" />论文<ExternalLink class="size-3" /></a>
           </div>
@@ -94,8 +96,11 @@ const totalSize = computed(() => algo.value?.files.reduce((s, f) => s + f.size, 
       <div class="container-page pt-6">
         <!-- 算法卡片 -->
         <div v-if="tab === 'card'" class="flex flex-col gap-8 lg:flex-row">
+          <aside class="hidden w-52 shrink-0 xl:block">
+            <div class="sticky top-20"><DocOutline :items="toc" /></div>
+          </aside>
           <div class="min-w-0 flex-1">
-            <MarkdownView :source="algo.readme" />
+            <MarkdownView :source="algo.readme" @toc="toc = $event" />
           </div>
           <aside class="order-first w-full shrink-0 space-y-5 lg:order-none lg:w-[400px]">
             <InferenceWidget :algo="algo" />

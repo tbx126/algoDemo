@@ -329,7 +329,6 @@ export const algorithms: Algorithm[] = SEEDS.map((s) => ({
   name: s.serviceCode,
   task: s.task,
   framework: 'PyTorch',
-  license: '/', // 第三方组件及权重授权待权利人确认
   tags: ['新能源场站', '可见光巡检', s.shortName],
   summary: `${s.fullName}：${s.method}，输出${s.output}。`,
   readme: readme(s),

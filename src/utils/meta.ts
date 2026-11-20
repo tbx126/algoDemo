@@ -15,9 +15,6 @@ export const TASKS: Record<TaskType, { label: string; group: 'CV' | '传统算�
 /** 内置评测器 & 原生渲染支持的任务 */
 export const BUILTIN_TASKS: TaskType[] = ['image-classification', 'object-detection', 'semantic-segmentation']
 
-/** 算法许可证选项；“/”表示不适用或未声明 */
-export const LICENSES = ['/', 'Apache-2.0', 'MIT', 'BSD-3-Clause', 'Internal', 'Proprietary']
-
 export const ROLES: Record<Role, { label: string; desc: string; chip: string }> = {
   admin: { label: '管理员', desc: '全部权限：数据集、评测基准、账号与审核，可查看与下载测试集', chip: 'border-indigo-200 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-600/20 dark:text-brand-100' },
   demo: { label: '演示账号', desc: '查看全部算法与排行榜，可在线推理、下载训练集；不能提交或评测', chip: 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-900/30 dark:text-sky-300' },

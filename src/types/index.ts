@@ -86,7 +86,6 @@ export interface Algorithm {
   name: string
   task: TaskType
   framework: Framework
-  license: string
   tags: string[]
   summary: string
   readme: string // markdown
@@ -326,7 +325,6 @@ export interface ListQuery {
   q?: string
   task?: TaskType | ''
   framework?: string
-  license?: string
   org?: string
   sort?: 'trending' | 'updated' | 'likes' | 'evals'
   page?: number

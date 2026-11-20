@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { marked } from 'marked'
+import { computed, watch } from 'vue'
+import { renderMarkdown, type TocItem } from '@/utils/markdown'
 
 const props = defineProps<{ source: string }>()
-// 原型中先转义原始 HTML；真实后端应在服务端做 HTML 清洗
-const html = computed(() => marked.parse(props.source.replace(/</g, '&lt;'), { async: false }) as string)
+const emit = defineEmits<{ toc: [TocItem[]] }>()
+const rendered = computed(() => renderMarkdown(props.source))
+watch(rendered, (r) => emit('toc', r.toc), { immediate: true })
 </script>
 
 <template>
-  <article class="prose-readme" v-html="html" />
+  <article class="prose-readme" v-html="rendered.html" />
 </template>

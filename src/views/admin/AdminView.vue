@@ -144,7 +144,6 @@ async function review(algoId: string, version: string, approve: boolean) {
                 <span class="mono text-gray-500">{{ r.version.version }}</span>
                 <span class="chip">{{ TASKS[r.algorithm.task].label }}</span>
                 <span class="chip">{{ r.algorithm.framework }}</span>
-                <span class="chip">许可证 {{ r.algorithm.license }}</span>
                 <span class="ml-auto text-xs text-gray-500">{{ r.version.createdBy }} 提交于 {{ fmtDate(r.version.createdAt) }}</span>
               </div>
               <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">{{ r.algorithm.summary }}</p>
@@ -157,7 +156,7 @@ async function review(algoId: string, version: string, approve: boolean) {
               <ul class="mt-3 space-y-1 rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-gray-800/60 dark:text-gray-400">
                 <li>✓ 自动扫描：requirements.txt 未发现已知恶意包</li>
                 <li>✓ 运行约束：评测容器断网、只读挂载、资源受限</li>
-                <li>⚠ 许可证为 {{ r.algorithm.license }}，请确认是否允许在平台内运行与展示</li>
+                <li>⚠ 请确认第三方组件与权重的授权范围是否允许在平台内运行与展示</li>
               </ul>
               <div class="mt-3 flex flex-col gap-2 sm:flex-row">
                 <input v-model="notes[r.algorithm.id + r.version.version]" class="input flex-1" placeholder="审核备注（驳回时必填）" aria-label="审核备注" />

@@ -2,7 +2,7 @@
 import { reactive, ref, watch } from 'vue'
 import { ApiError, updateAlgorithm } from '@/api'
 import { toast } from '@/stores/toast'
-import { LICENSES, TASKS } from '@/utils/meta'
+import { TASKS } from '@/utils/meta'
 import type { Algorithm, Framework, TaskType } from '@/types'
 import Modal from '@/components/ui/Modal.vue'
 import TagInput from '@/components/form/TagInput.vue'
@@ -12,8 +12,8 @@ const props = defineProps<{ algo: Algorithm }>()
 const open = defineModel<boolean>('open', { required: true })
 const emit = defineEmits<{ saved: [Algorithm] }>()
 
-const f = reactive({ summary: '', tags: [] as string[], license: '/', task: 'object-detection' as TaskType, framework: 'PyTorch' as Framework, readme: '' })
-watch(open, (v) => v && Object.assign(f, { summary: props.algo.summary, tags: [...props.algo.tags], license: props.algo.license, task: props.algo.task, framework: props.algo.framework, readme: props.algo.readme }), { immediate: true })
+const f = reactive({ summary: '', tags: [] as string[], task: 'object-detection' as TaskType, framework: 'PyTorch' as Framework, readme: '' })
+watch(open, (v) => v && Object.assign(f, { summary: props.algo.summary, tags: [...props.algo.tags], task: props.algo.task, framework: props.algo.framework, readme: props.algo.readme }), { immediate: true })
 
 const saving = ref(false)
 async function save() {
@@ -34,7 +34,7 @@ async function save() {
 <template>
   <Modal v-model:open="open" :title="`编辑算法 · ${algo.id}`" description="修改基本信息与算法卡片。版本、镜像与权重属于构建产物，需通过提交新版本更新。" width="max-w-2xl">
     <form id="edit-algo" class="space-y-4" @submit.prevent="save">
-      <div class="grid gap-3 sm:grid-cols-3">
+      <div class="grid gap-3 sm:grid-cols-2">
         <div>
           <label class="label" for="ea-task">平台评测任务类型</label>
           <select id="ea-task" v-model="f.task" class="input">
@@ -45,12 +45,6 @@ async function save() {
           <label class="label" for="ea-fw">推理框架</label>
           <select id="ea-fw" v-model="f.framework" class="input">
             <option v-for="x in ['PyTorch', 'ONNX', 'TensorRT', 'OpenCV', 'NumPy', 'Paddle']" :key="x">{{ x }}</option>
-          </select>
-        </div>
-        <div>
-          <label class="label" for="ea-lic">许可证</label>
-          <select id="ea-lic" v-model="f.license" class="input">
-            <option v-for="x in LICENSES" :key="x" :value="x">{{ x === '/' ? '/（不适用）' : x }}</option>
           </select>
         </div>
       </div>

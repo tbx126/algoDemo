@@ -5,7 +5,7 @@ import { ChevronLeft, ChevronRight, Plus, Search, X } from 'lucide-vue-next'
 import type { Algorithm, Dataset, ListQuery, TaskType } from '@/types'
 import { listAlgorithms, listDatasets } from '@/api'
 import { useAsync } from '@/utils/useAsync'
-import { LICENSES, TASKS } from '@/utils/meta'
+import { TASKS } from '@/utils/meta'
 import { orgs } from '@/mock/orgs'
 import { useSession } from '@/stores/session'
 import TaskIcon from '@/components/ui/TaskIcon.vue'
@@ -22,7 +22,6 @@ const q = computed<ListQuery>(() => ({
   q: (route.query.q as string) || '',
   task: ((route.query.task as string) || '') as TaskType | '',
   framework: (route.query.framework as string) || '',
-  license: (route.query.license as string) || '',
   org: (route.query.org as string) || '',
   sort: ((route.query.sort as string) || 'trending') as ListQuery['sort'],
   page: Number(route.query.page) || 1,
@@ -52,12 +51,10 @@ const groups = computed(() => {
   return g
 })
 const frameworks = ['PyTorch', 'ONNX', 'TensorRT', 'OpenCV', 'NumPy', 'Paddle']
-const licenses = LICENSES // 仅算法有许可证
 const activeFilters = computed(() =>
   [
     q.value.task && { k: 'task', label: TASKS[q.value.task as TaskType].label },
     q.value.framework && { k: 'framework', label: q.value.framework },
-    q.value.license && { k: 'license', label: q.value.license },
     q.value.org && { k: 'org', label: orgs.find((o) => o.id === q.value.org)?.displayName ?? q.value.org },
   ].filter(Boolean) as { k: keyof ListQuery; label: string }[],
 )
@@ -99,18 +96,6 @@ const createTo = computed(() => (props.kind === 'algorithm' ? (can.value.createA
             </button>
           </div>
         </template>
-        <h3 v-if="kind === 'algorithm'" class="mt-5 mb-2 text-sm font-medium text-gray-500">许可证</h3>
-        <div v-if="kind === 'algorithm'" class="flex flex-wrap gap-1.5">
-          <button
-            v-for="l in licenses"
-            :key="l"
-            class="cursor-pointer rounded-lg border px-2 py-1 text-xs"
-            :class="q.license === l ? 'border-gray-900 bg-gray-900 text-white dark:border-white dark:bg-white dark:text-gray-900' : 'border-gray-200 text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:text-gray-300 dark:hover:bg-gray-900'"
-            @click="setQ({ license: q.license === l ? '' : l })"
-          >
-            {{ l }}
-          </button>
-        </div>
         <template v-if="can.seeOthersOnBoard">
         <h3 class="mt-5 mb-2 text-sm font-medium text-gray-500">组织 / 厂商</h3>
         <select class="input" :value="q.org" aria-label="按组织筛选" @change="setQ({ org: ($event.target as HTMLSelectElement).value })">

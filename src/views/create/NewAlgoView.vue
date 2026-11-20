@@ -5,7 +5,7 @@ import { Box, Check, CircleAlert, Plus, ShieldCheck, Trash2 } from 'lucide-vue-n
 import { ApiError, createAlgorithm } from '@/api'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
-import { LICENSES, TASKS } from '@/utils/meta'
+import { TASKS } from '@/utils/meta'
 import { orgs } from '@/mock/orgs'
 import {
   AUDIO_FORMATS,
@@ -47,7 +47,6 @@ const f = reactive({
   owner: user.value.orgId ?? orgs.find((o) => o.kind === 'vendor')!.id,
   task: 'object-detection' as TaskType,
   framework: 'PyTorch' as Framework,
-  license: '/',
   // packageinfo / managementinfo
   id: '',
   version: '1.0.0',
@@ -262,7 +261,6 @@ ${fence}
       name: f.id.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/_/g, '-').toLowerCase(), // helmetDetect → helmet-detect
       task: f.task,
       framework: f.framework,
-      license: f.license,
       summary: f.descZh.slice(0, 120),
       version: f.version,
       gpuMem: +(f.req.videoMemory / 1024).toFixed(1),
@@ -324,8 +322,8 @@ ${fence}
       <form class="card mt-4 space-y-6 p-6" novalidate @submit.prevent>
         <!-- ============ 0 基本信息 ============ -->
         <template v-if="step === 0">
-          <FormSection title="归属与平台信息" desc="平台评测任务类型、推理框架与许可证不属于标准字段，用于匹配评测基准、构建运行镜像和展示。">
-            <div class="grid gap-4 sm:grid-cols-4">
+          <FormSection title="归属与平台信息" desc="平台评测任务类型与推理框架不属于标准字段，用于匹配评测基准和构建运行镜像。">
+            <div class="grid gap-4 sm:grid-cols-3">
               <div>
                 <label class="label" for="a-owner">所属厂商<span class="ml-0.5 text-rose-500">*</span></label>
                 <select id="a-owner" v-model="f.owner" class="input" :disabled="owners.length === 1">
@@ -348,12 +346,6 @@ ${fence}
                 <label class="label" for="a-fw">推理框架<span class="ml-0.5 text-rose-500">*</span></label>
                 <select id="a-fw" v-model="f.framework" class="input">
                   <option v-for="x in ['PyTorch', 'ONNX', 'TensorRT', 'OpenCV', 'NumPy', 'Paddle']" :key="x">{{ x }}</option>
-                </select>
-              </div>
-              <div>
-                <label class="label" for="a-lic">许可证</label>
-                <select id="a-lic" v-model="f.license" class="input">
-                  <option v-for="x in LICENSES" :key="x" :value="x">{{ x === '/' ? '/（不适用）' : x }}</option>
                 </select>
               </div>
             </div>
@@ -650,7 +642,7 @@ ${fence}
             <dl class="space-y-2.5 text-sm">
               <div><dt class="text-xs text-gray-500">厂商</dt><dd>{{ vendorOrg?.displayName }} <code class="mono text-xs text-gray-400">{{ vendorOrg?.id }}</code></dd></div>
               <div><dt class="text-xs text-gray-500">算法</dt><dd>{{ f.nameZh }} <code class="mono text-xs text-gray-400">{{ f.id }}@{{ f.version }}</code></dd></div>
-              <div><dt class="text-xs text-gray-500">评测任务 / 框架 / 许可证</dt><dd>{{ TASKS[f.task].label }} · {{ f.framework }} · {{ f.license }}</dd></div>
+              <div><dt class="text-xs text-gray-500">评测任务 / 框架</dt><dd>{{ TASKS[f.task].label }} · {{ f.framework }}</dd></div>
               <div><dt class="text-xs text-gray-500">分类 / 场所</dt><dd>{{ f.classifications.join('、') }} · {{ f.places.join('、') }}</dd></div>
               <div><dt class="text-xs text-gray-500">资源</dt><dd>显存 {{ f.req.videoMemory }} MB · CPU {{ f.req.CPU }} 核 · {{ f.chip }}</dd></div>
               <div><dt class="text-xs text-gray-500">交付材料</dt><dd>{{ declaration.deliveries.length }} / {{ DELIVERIES.length }} 项</dd></div>

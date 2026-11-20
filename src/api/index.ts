@@ -105,7 +105,6 @@ function filterSort<T extends Algorithm | Dataset>(list: T[], q: ListQuery): T[]
     r = r.filter((x) => x.id.toLowerCase().includes(k) || x.summary.includes(q.q!) || x.tags.some((t) => t.toLowerCase().includes(k)))
   }
   if (q.task) r = r.filter((x) => x.task === q.task)
-  if (q.license) r = r.filter((x) => 'license' in x && x.license === q.license)
   if (q.org) r = r.filter((x) => x.org === q.org)
   if (q.framework) r = r.filter((x) => 'framework' in x && x.framework === q.framework)
   const sort = q.sort ?? 'trending'
@@ -141,7 +140,6 @@ export async function createAlgorithm(input: {
   name: string
   task: TaskType
   framework: Algorithm['framework']
-  license: string
   summary: string
   version: string
   gpuMem: number
@@ -162,7 +160,6 @@ export async function createAlgorithm(input: {
     name: input.name,
     task: input.task,
     framework: input.framework,
-    license: input.license,
     tags: input.tags ?? (can.value.needsReview ? ['厂商提交'] : ['新提交']),
     summary: input.summary,
     declaration: input.declaration,
@@ -560,7 +557,7 @@ export async function updateVendor(
 }
 
 // PATCH /api/algorithms/{id}
-export async function updateAlgorithm(id: string, patch: Partial<Pick<Algorithm, 'summary' | 'tags' | 'license' | 'task' | 'framework' | 'readme'>>): Promise<Algorithm> {
+export async function updateAlgorithm(id: string, patch: Partial<Pick<Algorithm, 'summary' | 'tags' | 'task' | 'framework' | 'readme'>>): Promise<Algorithm> {
   await delay(300)
   requireAdmin()
   const a = db.algorithms.find((x) => x.id === id)
@@ -609,14 +606,14 @@ export async function setUserActive(id: string, active: boolean): Promise<void> 
 }
 
 export interface ReviewItem {
-  algorithm: Pick<Algorithm, 'id' | 'org' | 'name' | 'task' | 'framework' | 'license' | 'summary'>
+  algorithm: Pick<Algorithm, 'id' | 'org' | 'name' | 'task' | 'framework' | 'summary'>
   version: AlgoVersion
 }
 
 export async function listReviewQueue(): Promise<ReviewItem[]> {
   await delay()
   const out: ReviewItem[] = []
-  for (const a of db.algorithms) for (const v of a.versions) if (v.status === 'pending_review') out.push({ algorithm: { id: a.id, org: a.org, name: a.name, task: a.task, framework: a.framework, license: a.license, summary: a.summary }, version: v })
+  for (const a of db.algorithms) for (const v of a.versions) if (v.status === 'pending_review') out.push({ algorithm: { id: a.id, org: a.org, name: a.name, task: a.task, framework: a.framework, summary: a.summary }, version: v })
   return clone(out)
 }
 
