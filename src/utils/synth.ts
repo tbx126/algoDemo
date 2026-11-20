@@ -32,7 +32,7 @@ function hsl(h: number, s: number, l: number) {
 export function sceneLayout(seed: number, task: TaskType, nClasses: number): SynthScene {
   const ro = rng(seed * 31 + 7)
   const n = Math.max(1, nClasses)
-  if (task === 'signal-processing' || task === 'optimization') return { objects: [], label: Math.floor(ro() * n) }
+  if (task === 'signal-processing' || task === 'power-forecast' || task === 'optimization') return { objects: [], label: Math.floor(ro() * n) }
   const nObj = task === 'image-classification' ? 1 : task === 'instance-segmentation' ? 10 + Math.floor(ro() * 8) : 3 + Math.floor(ro() * 5)
   const objects: SynthObject[] = []
   for (let i = 0; i < nObj; i++) {
@@ -56,7 +56,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, W: number, H: number, s
   const hue = r() * 360
   ctx.clearRect(0, 0, W, H)
 
-  if (task === 'signal-processing') {
+  if (task === 'signal-processing' || task === 'power-forecast') {
     ctx.fillStyle = '#0f172a'
     ctx.fillRect(0, 0, W, H)
     ctx.strokeStyle = 'rgba(148,163,184,.15)'

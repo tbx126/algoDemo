@@ -6,6 +6,7 @@ import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { ROLES, TASKS } from '@/utils/meta'
 import { fmtBytes, fmtDate, fmtMetric, fmtNum, timeAgo } from '@/utils/format'
+import { algoName } from '@/utils/display'
 import { benchmarks as allBench } from '@/mock/benchmarks'
 import AlgoCard from '@/components/algo/AlgoCard.vue'
 import DatasetCard from '@/components/dataset/DatasetCard.vue'
@@ -108,7 +109,7 @@ const primaryOf = (bid: string) => allBench.find((b) => b.id === bid)?.metrics.f
           <p class="mt-5 mb-2 text-xs text-gray-500">预热中的推理容器</p>
           <div v-for="w in q.warmContainers" :key="w.algorithmId" class="flex items-center gap-2 py-1 text-xs">
             <Flame class="size-3.5 shrink-0 text-orange-500" />
-            <RouterLink :to="`/algorithms/${w.algorithmId}`" class="mono truncate hover:underline">{{ w.algorithmId.split('/')[1] }}</RouterLink>
+            <RouterLink :to="`/algorithms/${w.algorithmId}`" class="truncate hover:underline">{{ algoName(w.algorithmId) }}</RouterLink>
             <span class="ml-auto shrink-0 text-gray-500">{{ w.memGB }} GB</span>
           </div>
         </template>
@@ -150,7 +151,7 @@ const primaryOf = (bid: string) => allBench.find((b) => b.id === bid)?.metrics.f
           <div class="space-y-1">
             <RouterLink v-for="r in runs?.slice(0, 7)" :key="r.id" :to="`/evals/${r.id}`" class="block rounded-lg px-2 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-900">
               <div class="flex items-center gap-2">
-                <span class="mono truncate">{{ r.algorithmId.split('/')[1] }}</span>
+                <span class="truncate">{{ algoName(r.algorithmId) }}</span>
                 <span class="mono text-xs text-gray-400">{{ r.algoVersion }}</span>
                 <StatusBadge :status="r.status" kind="eval" class="ml-auto" />
               </div>

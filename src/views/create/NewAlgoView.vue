@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Box, Check, CircleAlert, Plus, ShieldCheck, Trash2 } from 'lucide-vue-next'
-import { ApiError, createAlgorithm } from '@/api'
+import { Box, Check, CircleAlert, Plus, ShieldCheck, Sparkles, Trash2 } from 'lucide-vue-next'
+import { ApiError, createAlgorithm, listTags } from '@/api'
+import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
-import { TASKS } from '@/utils/meta'
+import { BUSINESS_CATEGORIES, TASKS } from '@/utils/meta'
 import { orgs } from '@/mock/orgs'
 import {
   AUDIO_FORMATS,
@@ -24,7 +25,7 @@ import {
   packageInfoXml,
   technicalJson,
 } from '@/utils/standard'
-import type { AlgoDeclaration, Framework, ManagementInfo, ParamSupport, SourceInfo, TaskType, TechnicalInfo } from '@/types'
+import type { AlgoDeclaration, BusinessCategory, Framework, ManagementInfo, ParamSupport, SourceInfo, TaskType, TechnicalInfo } from '@/types'
 import StateView from '@/components/ui/StateView.vue'
 import FormSection from '@/components/form/FormSection.vue'
 import TextField from '@/components/form/TextField.vue'
@@ -43,10 +44,14 @@ const touched = reactive<boolean[]>(steps.map(() => false))
 
 // 所属厂商：厂商账号固定为自己的厂商；管理员可代任意厂商或平台内部命名空间提交
 const owners = computed(() => (state.role === 'admin' ? orgs : orgs.filter((o) => o.id === user.value.orgId)))
+const { data: tagList } = useAsync(() => listTags())
+const tagSuggestions = computed(() => (tagList.value ?? []).map((t) => t.name))
 const f = reactive({
   owner: user.value.orgId ?? orgs.find((o) => o.kind === 'vendor')!.id,
   task: 'object-detection' as TaskType,
+  business: 'inspection' as BusinessCategory,
   framework: 'PyTorch' as Framework,
+  tags: [] as string[],
   // packageinfo / managementinfo
   id: '',
   version: '1.0.0',
@@ -260,13 +265,14 @@ ${fence}
       org: f.owner,
       name: f.id.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/_/g, '-').toLowerCase(), // helmetDetect → helmet-detect
       task: f.task,
+      business: f.business,
       framework: f.framework,
       summary: f.descZh.slice(0, 120),
       version: f.version,
       gpuMem: +(f.req.videoMemory / 1024).toFixed(1),
       weightsSize: f.deliveries.weights?.size ?? 0,
       readme,
-      tags: [...(can.value.needsReview ? ['厂商提交'] : []), ...f.places.slice(0, 2)],
+      tags: f.tags.length ? f.tags : [...(can.value.needsReview ? ['厂商提交'] : []), ...f.places.slice(0, 2)],
       files: [
         { path: 'packageinfo.xml', size: packageInfoXml(d.packageInfo).length, kind: 'config' },
         { path: 'managementinfo.json', size: managementJson(d.management).length, kind: 'config' },
@@ -284,15 +290,65 @@ ${fence}
   }
 }
 
+// ---------- 一键填写示例数据（便于管理员快速浏览各步骤所需填写与上传项） ----------
+function fillExample() {
+  f.owner = owners.value.find((o) => o.id === 'Admin')?.id ?? owners.value[0]?.id ?? f.owner
+  f.task = 'object-detection'
+  f.business = 'security'
+  f.framework = 'PyTorch'
+  f.tags = ['安全帽检测', '周界安防', '示例算法']
+  f.id = 'helmetDetectDemo'
+  f.version = '1.0.0'
+  f.nameZh = '安全帽佩戴检测（示例）'
+  f.nameEn = 'Safety Helmet Detection Demo'
+  f.classifications = ['GN01']
+  f.places = ['新能源场站', '变电站室内外']
+  f.descZh = '识别施工与运维场景中人员是否佩戴安全帽，输出人员与安全帽边界框及告警事件，适用于可见光监控画面实时检测。'
+  f.descEn = 'Detect safety helmet wearing status in power station and construction scenes.'
+  f.covers = [{ type: 'picture', file: { name: 'helmet_cover_demo.jpg', size: 245760 } }]
+  f.cond = {
+    weather: '晴、阴、小雨',
+    light: '白天及夜间补光场景',
+    pixel: '目标头部像素 ≥ 24×24，建议 1080P 画面',
+    baffle: '目标遮挡不超过 30%',
+    image: '画面清晰，无严重运动模糊与过曝',
+    other: '示例算法数据，可自由修改各字段',
+  }
+  f.suit = [{ desc: '人员正面或侧面清晰可见的常规监控画面', file: { name: 'suit_scene_01.jpg', size: 184320 } }]
+  f.unsuit = [{ desc: '极端逆光或严重遮挡画面', file: { name: 'unsuit_scene_01.jpg', size: 163840 } }]
+  f.sources = [{ type: 'picture', format: ['jpg', 'png'], min: '640*480', max: '3840*2160' }]
+  f.chip = 'NVIDIA GPU'
+  f.req = { videoMemory: 2048, disk: 4096, memory: 4096, AImemory: 0, CPU: 4 }
+  f.abilities = [{ type: 'picture', specification: '1080P', ability: 15, taskAbility: 4 }]
+  f.regulation = {
+    input: '{"image":"base64_or_url","conf_threshold":0.5}',
+    output: '{"detections":[{"label":"no_helmet","score":0.93,"bbox":[120,85,210,195]}]}',
+    eventCode: 'HELMET_MISSING_ALERT',
+  }
+  f.params.eventTypes = ['helmet', 'no_helmet']
+  for (const d of DELIVERIES) {
+    if (d.necessity === 'required') {
+      f.deliveries[d.key] = { name: `demo_${d.key}.zip`, size: d.key === 'weights' ? 48 * 1024 * 1024 : 512 * 1024 }
+    }
+  }
+  f.checklist = CHECKLIST.filter((c) => c.necessity === 'required').map((c) => c.key)
+  f.changelog = '示例首次发布（一键填充）'
+  visited.value = steps.length - 1
+  toast('已一键填充全流程示例数据，可直接点击「下一步」或任意步骤查看所需上传内容')
+}
+
 </script>
 
 <template>
   <div class="container-page max-w-5xl pt-8">
-    <div class="flex flex-wrap items-start gap-3">
-      <div>
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div class="min-w-0 flex-1">
         <h1 class="flex items-center gap-2 text-2xl font-semibold text-gray-900 dark:text-white"><Box class="size-6 text-brand-600" />{{ can.needsReview ? '提交算法' : '新建算法' }}</h1>
         <p class="mt-1 text-sm text-gray-500">按《智能运维平台算法中心算法标准 1.0》填写，提交后自动生成 packageinfo.xml、managementinfo.json、technicalinfo.json。带 <span class="text-rose-500">*</span> 为必选项，长度按 UTF-8 字节计算。</p>
       </div>
+      <button v-if="can.admin" type="button" class="btn-default shrink-0" @click="fillExample">
+        <Sparkles class="size-4 text-amber-500" />一键填写示例数据
+      </button>
     </div>
 
     <StateView v-if="!can.createAlgorithm" :error="{ status: 403, message: '演示账号不能提交算法' }" />
@@ -322,8 +378,8 @@ ${fence}
       <form class="card mt-4 space-y-6 p-6" novalidate @submit.prevent>
         <!-- ============ 0 基本信息 ============ -->
         <template v-if="step === 0">
-          <FormSection title="归属与平台信息" desc="平台评测任务类型与推理框架不属于标准字段，用于匹配评测基准和构建运行镜像。">
-            <div class="grid gap-4 sm:grid-cols-3">
+          <FormSection title="归属与平台分类" desc="任务分类、业务分类、标签与推理框架用于平台检索、筛选、评测基准匹配及运行镜像构建。">
+            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div>
                 <label class="label" for="a-owner">所属厂商<span class="ml-0.5 text-rose-500">*</span></label>
                 <select id="a-owner" v-model="f.owner" class="input" :disabled="owners.length === 1">
@@ -337,9 +393,15 @@ ${fence}
                 <p class="hint">写入 packageinfo 的 vendor.*</p>
               </div>
               <div>
-                <label class="label" for="a-task">平台评测任务类型<span class="ml-0.5 text-rose-500">*</span></label>
+                <label class="label" for="a-task">任务分类<span class="ml-0.5 text-rose-500">*</span></label>
                 <select id="a-task" v-model="f.task" class="input">
                   <option v-for="(v, k) in TASKS" :key="k" :value="k">{{ v.label }}</option>
+                </select>
+              </div>
+              <div>
+                <label class="label" for="a-biz">业务分类<span class="ml-0.5 text-rose-500">*</span></label>
+                <select id="a-biz" v-model="f.business" class="input">
+                  <option v-for="(v, k) in BUSINESS_CATEGORIES" :key="k" :value="k">{{ v.label }}</option>
                 </select>
               </div>
               <div>
@@ -349,6 +411,7 @@ ${fence}
                 </select>
               </div>
             </div>
+            <TagInput v-model="f.tags" label="算法标签" :suggestions="tagSuggestions" placeholder="输入标签名回车添加，或点选下方已有标签" />
           </FormSection>
 
           <FormSection title="算法包信息" source="A.1 packageinfo.xml">
@@ -642,7 +705,7 @@ ${fence}
             <dl class="space-y-2.5 text-sm">
               <div><dt class="text-xs text-gray-500">厂商</dt><dd>{{ vendorOrg?.displayName }} <code class="mono text-xs text-gray-400">{{ vendorOrg?.id }}</code></dd></div>
               <div><dt class="text-xs text-gray-500">算法</dt><dd>{{ f.nameZh }} <code class="mono text-xs text-gray-400">{{ f.id }}@{{ f.version }}</code></dd></div>
-              <div><dt class="text-xs text-gray-500">评测任务 / 框架</dt><dd>{{ TASKS[f.task].label }} · {{ f.framework }}</dd></div>
+              <div><dt class="text-xs text-gray-500">任务 / 业务 / 框架</dt><dd>{{ TASKS[f.task].label }} · {{ BUSINESS_CATEGORIES[f.business].label }} · {{ f.framework }}</dd></div>
               <div><dt class="text-xs text-gray-500">分类 / 场所</dt><dd>{{ f.classifications.join('、') }} · {{ f.places.join('、') }}</dd></div>
               <div><dt class="text-xs text-gray-500">资源</dt><dd>显存 {{ f.req.videoMemory }} MB · CPU {{ f.req.CPU }} 核 · {{ f.chip }}</dd></div>
               <div><dt class="text-xs text-gray-500">交付材料</dt><dd>{{ declaration.deliveries.length }} / {{ DELIVERIES.length }} 项</dd></div>

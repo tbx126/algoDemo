@@ -30,6 +30,8 @@ export function labelSpec(task: TaskType): LabelSpec {
     case 'semantic-segmentation':
     case 'instance-segmentation':
       return { required: ['file_name', 'mask_file'], optional: CONDITION_COLUMNS, perObject: false, desc: '一张图一行，mask_file 指向 masks/ 下的 PNG（像素值为类别序号）', dataExt: 'jpg' }
+    case 'power-forecast':
+      return { required: ['file_name', 'value'], optional: ['station', 'weather'], perObject: false, desc: '一个时序文件一行，value 为目标功率值', dataExt: 'csv' }
     case 'signal-processing':
       return { required: ['file_name', 'label'], optional: ['device', 'speed_rpm'], perObject: false, desc: '一个信号文件一行', dataExt: 'csv' }
     case 'optimization':

@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { BookOpen, ClipboardList, Pencil, ExternalLink, FileCode, FileCog, FileText, FlaskConical, FolderTree, Heart, HardDrive, ScrollText, Trophy, Weight } from 'lucide-vue-next'
-import { getAlgorithm, listBenchmarks, listEvals } from '@/api'
+import { BookOpen, ClipboardList, Pencil, ExternalLink, FileCode, FileCog, FileText, FlaskConical, FolderTree, Heart, HardDrive, Plus, ScrollText, Tag, Trash2, Trophy, Weight } from 'lucide-vue-next'
+import { ApiError, deleteAlgorithm, getAlgorithm, listBenchmarks, listEvals, listTags, updateAlgorithmTags } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
+import { toast } from '@/stores/toast'
+import { BUSINESS_CATEGORIES } from '@/utils/meta'
 import { fmtBytes, fmtDate, fmtMetric, timeAgo } from '@/utils/format'
+import { algoName, orgLabel } from '@/utils/display'
 import { orgs } from '@/mock/orgs'
 import type { AlgoVersion } from '@/types'
 import StateView from '@/components/ui/StateView.vue'
@@ -18,6 +21,7 @@ import DocOutline from '@/components/ui/DocOutline.vue'
 import type { TocItem } from '@/utils/markdown'
 import Modal from '@/components/ui/Modal.vue'
 import EditAlgorithmModal from '@/components/admin/EditAlgorithmModal.vue'
+import TagInput from '@/components/form/TagInput.vue'
 import InferenceWidget from '@/components/algo/InferenceWidget.vue'
 import EvalTable from '@/components/benchmark/EvalTable.vue'
 import DeclarationView from '@/components/algo/DeclarationView.vue'
@@ -32,6 +36,45 @@ const setTab = (t: string) => router.replace({ query: t === 'card' ? {} : { tab:
 const { data: algo, loading, error } = useAsync(() => getAlgorithm(id.value))
 const orgName = (oid: string) => orgs.find((o) => o.id === oid)?.displayName ?? oid
 const editOpen = ref(false)
+const deleteOpen = ref(false)
+const deleting = ref(false)
+async function doDelete() {
+  if (!algo.value || deleting.value) return
+  deleting.value = true
+  try {
+    await deleteAlgorithm(algo.value.id)
+    toast(`算法「${algo.value.id}」已删除`, 'info')
+    deleteOpen.value = false
+    router.push('/algorithms')
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : '删除失败', 'error')
+  } finally {
+    deleting.value = false
+  }
+}
+const tagOpen = ref(false)
+const tagDraft = ref<string[]>([])
+const tagSuggestions = ref<string[]>([])
+const tagSaving = ref(false)
+async function openTagModal() {
+  if (!algo.value) return
+  tagDraft.value = [...algo.value.tags]
+  tagOpen.value = true
+  tagSuggestions.value = (await listTags()).map((t) => t.name)
+}
+async function saveTags() {
+  if (!algo.value) return
+  tagSaving.value = true
+  try {
+    algo.value = await updateAlgorithmTags(algo.value.id, tagDraft.value)
+    toast('标签已更新')
+    tagOpen.value = false
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : '保存失败', 'error')
+  } finally {
+    tagSaving.value = false
+  }
+}
 const toc = ref<TocItem[]>([])
 const { data: runs } = useAsync(() => listEvals({ algorithmId: id.value }))
 const { data: benches } = useAsync(() => listBenchmarks())
@@ -65,19 +108,45 @@ const totalSize = computed(() => algo.value?.files.reduce((s, f) => s + f.size, 
         <div class="container-page">
           <div class="flex flex-wrap items-center gap-2 text-lg">
             <OrgAvatar :org="algo.org" :size="22" />
-            <RouterLink :to="`/orgs/${algo.org}`" class="text-gray-500 hover:text-brand-600">{{ algo.org }}</RouterLink>
+            <RouterLink :to="`/orgs/${algo.org}`" class="text-gray-500 hover:text-brand-600">{{ orgLabel(algo.org) }}</RouterLink>
             <span class="text-gray-300">/</span>
-            <h1 class="mono font-semibold text-gray-900 dark:text-white">{{ algo.name }}</h1>
+            <h1 class="font-semibold text-gray-900 dark:text-white">{{ algoName(algo) }}</h1>
             <HashText :value="algo.id" :short="99" class="hidden [&_code]:hidden sm:inline-flex" />
             <button class="btn-default ml-1 px-2 py-0.5 text-xs" :aria-pressed="liked" @click="liked = !liked">
               <Heart class="size-3.5" :class="liked ? 'fill-rose-500 text-rose-500' : ''" />{{ algo.likes + (liked ? 1 : 0) }}
             </button>
-            <button v-if="can.admin" class="btn-default ml-auto text-sm" @click="editOpen = true"><Pencil class="size-4" />编辑</button>
+            <div v-if="can.admin" class="ml-auto flex items-center gap-2">
+              <button class="btn-default text-sm" @click="editOpen = true"><Pencil class="size-4" />编辑</button>
+              <button class="btn-danger text-sm" @click="deleteOpen = true"><Trash2 class="size-4" />删除</button>
+            </div>
           </div>
           <div class="mt-3 flex flex-wrap items-center gap-1.5">
             <TaskBadge :task="algo.task" />
+            <RouterLink
+              v-if="BUSINESS_CATEGORIES[algo.business]"
+              :to="`/algorithms?business=${algo.business}`"
+              class="chip hover:opacity-85"
+              :class="BUSINESS_CATEGORIES[algo.business].chip"
+            >
+              {{ BUSINESS_CATEGORIES[algo.business].label }}
+            </RouterLink>
             <span class="chip">{{ algo.framework }}</span>
-            <span v-for="t in algo.tags" :key="t" class="chip">{{ t }}</span>
+            <RouterLink
+              v-for="t in algo.tags"
+              :key="t"
+              :to="`/algorithms?tags=${encodeURIComponent(t)}`"
+              class="chip hover:border-gray-400"
+            >
+              <Tag class="size-3 text-gray-400" />{{ t }}
+            </RouterLink>
+            <button
+              v-if="can.createAlgorithm"
+              type="button"
+              class="chip cursor-pointer border-dashed text-gray-500 hover:border-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+              @click="openTagModal"
+            >
+              <Plus class="size-3" />管理标签
+            </button>
             <a v-if="algo.paperUrl" :href="algo.paperUrl" target="_blank" rel="noopener" class="chip hover:border-gray-400"><BookOpen class="size-3" />论文<ExternalLink class="size-3" /></a>
           </div>
           <div class="mt-4 flex gap-1 no-scrollbar overflow-x-auto overflow-y-hidden">
@@ -96,9 +165,7 @@ const totalSize = computed(() => algo.value?.files.reduce((s, f) => s + f.size, 
       <div class="container-page pt-6">
         <!-- 算法卡片 -->
         <div v-if="tab === 'card'" class="flex flex-col gap-8 lg:flex-row">
-          <aside class="hidden w-52 shrink-0 xl:block">
-            <div class="sticky top-20"><DocOutline :items="toc" /></div>
-          </aside>
+          <DocOutline :items="toc" />
           <div class="min-w-0 flex-1">
             <MarkdownView :source="algo.readme" @toc="toc = $event" />
           </div>
@@ -132,6 +199,7 @@ const totalSize = computed(() => algo.value?.files.reduce((s, f) => s + f.size, 
             <div class="card space-y-2 p-4 text-sm">
               <div class="flex justify-between gap-3"><span class="text-gray-500">厂商</span><RouterLink :to="`/orgs/${algo.org}`" class="truncate hover:text-brand-600">{{ orgName(algo.org) }}</RouterLink></div>
               <div class="flex justify-between gap-3"><span class="text-gray-500">标识</span><span class="mono truncate">{{ algo.name }}</span></div>
+              <div v-if="BUSINESS_CATEGORIES[algo.business]" class="flex justify-between"><span class="text-gray-500">业务分类</span><span class="chip py-0 text-xs" :class="BUSINESS_CATEGORIES[algo.business].chip">{{ BUSINESS_CATEGORIES[algo.business].label }}</span></div>
               <div class="flex justify-between"><span class="text-gray-500">最新版本</span><span class="mono">{{ algo.versions[0].version }}</span></div>
               <div class="flex justify-between"><span class="text-gray-500">状态</span><StatusBadge :status="algo.versions[0].status" /></div>
               <div class="flex justify-between"><span class="text-gray-500">更新</span><span>{{ timeAgo(algo.updatedAt) }}</span></div>
@@ -225,6 +293,19 @@ const totalSize = computed(() => algo.value?.files.reduce((s, f) => s + f.size, 
           <pre class="scroll-thin max-h-80 overflow-auto rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-gray-100"><span v-for="(l, i) in logOf.buildLog" :key="i" class="block" :class="l.startsWith('[error]') ? 'text-rose-400' : l.startsWith('[review]') ? 'text-amber-300' : ''">{{ l }}</span></pre>
           <p v-if="logOf.reviewNote" class="text-sm">审核备注：{{ logOf.reviewNote }}</p>
         </div>
+      </Modal>
+      <Modal v-model:open="tagOpen" :title="`管理标签 · ${algo.name}`" description="为算法选择已有标签，或直接输入新标签名称后回车添加。">
+        <TagInput v-model="tagDraft" label="算法标签" :suggestions="tagSuggestions" placeholder="输入标签名回车添加，或点选下方已有标签" />
+        <template #footer>
+          <button type="button" class="btn-default" @click="tagOpen = false">取消</button>
+          <button type="button" class="btn-brand" :disabled="tagSaving" @click="saveTags">{{ tagSaving ? '保存中…' : '保存' }}</button>
+        </template>
+      </Modal>
+      <Modal v-model:open="deleteOpen" :title="`删除算法 · ${algo.id}`" :description="`确认删除算法「${algo.id}」？其全部版本与 ${runs?.length ?? 0} 条评测记录将一并移除，无法撤销。`">
+        <template #footer>
+          <button type="button" class="btn-default" @click="deleteOpen = false">取消</button>
+          <button type="button" class="btn-danger" :disabled="deleting" @click="doDelete">{{ deleting ? '删除中…' : '确认删除' }}</button>
+        </template>
       </Modal>
       <EditAlgorithmModal v-model:open="editOpen" :algo="algo" @saved="algo = $event" />
     </template>

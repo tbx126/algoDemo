@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { CircleAlert, CircleCheck, CircleX, Database, FileSpreadsheet, LoaderCircle, Lock, TriangleAlert } from 'lucide-vue-next'
+import { CircleAlert, CircleCheck, CircleX, Database, FileSpreadsheet, LoaderCircle, Lock, Sparkles, TriangleAlert } from 'lucide-vue-next'
 import { ApiError, createDataset, listDatasets, uploadDatasetPart, type PartUpload } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
@@ -163,12 +163,41 @@ async function submit() {
     submitting.value = false
   }
 }
+// ---------- 一键填写示例数据 ----------
+function fillExample() {
+  if (f.mode === 'new') {
+    f.name = 'helmet-detect-demo'
+    f.task = 'object-detection'
+    f.summary = '新能源场站安全帽佩戴目标检测示例数据集，包含白天与夜间场景图片及边界框标注。'
+    f.classes = ['安全帽', '未佩戴安全帽', '人员']
+    f.zip = { name: 'helmet-detect-train-v1.0.zip', size: 128 * 1024 * 1024 }
+    f.csvText = ''
+    f.csvName = ''
+    f.note = '示例训练集首个版本（一键填充）'
+  } else {
+    const first = dsList.value?.items[0]
+    if (first && !f.datasetId) f.datasetId = first.id
+    const dsName = (target.value ?? first)?.name ?? 'dataset'
+    f.zip = { name: `${dsName}-${f.part}-${nextVersion.value}.zip`, size: 64 * 1024 * 1024 }
+    f.csvText = ''
+    f.csvName = ''
+    f.note = '示例增量版本（一键填充）'
+  }
+  toast('已一键填充示例数据，可直接点击「下一步」查看数据上传与校验步骤')
+}
 </script>
 
 <template>
   <div class="container-page max-w-4xl pt-8">
-    <h1 class="flex items-center gap-2 text-2xl font-semibold text-gray-900 dark:text-white"><Database class="size-6 text-brand-600" />上传数据集</h1>
-    <p class="mt-1 text-sm text-gray-500">每个数据集分为训练集和测试集，分开上传、各自有版本。两部分结构一致：<code class="mono">images/</code> 存放数据，<code class="mono">labels.csv</code> 存放真值。</p>
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div class="min-w-0 flex-1">
+        <h1 class="flex items-center gap-2 text-2xl font-semibold text-gray-900 dark:text-white"><Database class="size-6 text-brand-600" />上传数据集</h1>
+        <p class="mt-1 text-sm text-gray-500">每个数据集分为训练集和测试集，分开上传、各自有版本。两部分结构一致：<code class="mono">images/</code> 存放数据，<code class="mono">labels.csv</code> 存放真值。</p>
+      </div>
+      <button v-if="can.admin" type="button" class="btn-default shrink-0" @click="fillExample">
+        <Sparkles class="size-4 text-amber-500" />一键填写示例数据
+      </button>
+    </div>
 
     <StateView v-if="!can.createDataset" :error="{ status: 403, message: '仅管理员可以上传数据集' }" />
     <template v-else>

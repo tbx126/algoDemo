@@ -43,8 +43,8 @@ function switchRole(r: Role) {
   <header class="sticky top-0 z-40 border-b border-gray-100 bg-white/90 backdrop-blur dark:border-gray-800 dark:bg-gray-950/90">
     <div class="container-page flex h-14 items-center gap-4">
       <RouterLink to="/" class="flex shrink-0 items-center gap-2 font-semibold text-gray-900 dark:text-white">
-        <img src="/logo.svg" alt="" class="size-7" />
-        <span class="text-[17px] tracking-tight">AlgoHub</span>
+        <img src="/logo.png" alt="总部算法平台" class="size-7 rounded-md object-contain" />
+        <span class="text-[17px] tracking-tight">总部算法平台</span>
       </RouterLink>
 
       <GlobalSearch class="hidden w-64 md:block xl:w-80" />

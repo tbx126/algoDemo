@@ -2,7 +2,10 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { TocItem } from '@/utils/markdown'
 
-/** 文档大纲：一条一条列出标题，滚动时高亮当前所在章节，点击跳转 */
+/**
+ * 悬浮式迷你文档大纲：
+ * 仅在左侧边缘显示一列短横线刻度（不占据正文布局、不显示标题名称），滚动时高亮当前章节，点击跳转。
+ */
 const props = defineProps<{ items: TocItem[] }>()
 const active = ref('')
 /** 点击跳转的目标：页面已滚到底、标题无法再到达顶部时，仍保持高亮该项 */
@@ -39,7 +42,10 @@ onMounted(() => {
   window.addEventListener('scroll', onScroll, { passive: true })
   nextTick(update)
 })
-onBeforeUnmount(() => window.removeEventListener('scroll', onScroll))
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', onScroll)
+  if (timer) clearTimeout(timer)
+})
 watch(() => props.items, () => nextTick(update))
 
 function go(id: string) {
@@ -53,21 +59,36 @@ function go(id: string) {
 </script>
 
 <template>
-  <nav v-if="items.length" aria-label="文档大纲" class="text-sm">
-    <p class="mb-2 text-xs font-medium tracking-wide text-gray-400">大纲</p>
-    <ul class="scroll-thin max-h-[calc(100vh-8rem)] overflow-y-auto border-l border-gray-200 dark:border-gray-800">
+  <nav
+    v-if="items.length"
+    aria-label="文档大纲"
+    class="fixed top-1/2 left-[max(0.5rem,calc(50%-744px))] z-30 hidden -translate-y-1/2 lg:block"
+  >
+    <ul class="no-scrollbar flex max-h-[70vh] flex-col items-start overflow-y-auto py-1">
       <li v-for="it in items" :key="it.id">
         <a
           :href="`#${it.id}`"
-          class="-ml-px block border-l-2 py-1 pr-2 leading-snug transition-colors"
-          :class="[
-            it.depth === 3 ? 'pl-6 text-[13px]' : 'pl-3',
-            active === it.id ? 'border-gray-900 font-medium text-gray-900 dark:border-white dark:text-white' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-800 dark:hover:border-gray-600 dark:hover:text-gray-200',
-          ]"
+          :aria-label="it.text"
           :aria-current="active === it.id ? 'location' : undefined"
+          class="group flex items-center py-1.5 pr-2"
           @click.prevent="go(it.id)"
-          >{{ it.text }}</a
         >
+          <span
+            class="block rounded-full transition-all duration-200"
+            :class="[
+              active === it.id
+                ? 'h-[2.5px] bg-gray-900 dark:bg-white'
+                : 'h-[2px] bg-gray-300 group-hover:bg-gray-500 dark:bg-gray-700 dark:group-hover:bg-gray-400',
+              it.depth === 3
+                ? active === it.id
+                  ? 'w-3.5'
+                  : 'w-2.5'
+                : active === it.id
+                  ? 'w-5'
+                  : 'w-4',
+            ]"
+          />
+        </a>
       </li>
     </ul>
   </nav>

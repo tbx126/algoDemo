@@ -5,6 +5,7 @@
  * 材料中未提供的信息（如算法分类编码、封面、性能压测、权重与镜像文件）保持为空，不做虚构。
  */
 import type { AlgoDeclaration, AlgoFile, AlgoVersion, Algorithm, TaskType } from '@/types'
+import { fakeSha } from '@/utils/format'
 
 export const VENDOR_ID = 'FengyunShenlan'
 const VENDOR_ZH = '锋云深蓝'
@@ -323,21 +324,165 @@ function version(s: Seed): AlgoVersion {
   }
 }
 
-export const algorithms: Algorithm[] = SEEDS.map((s) => ({
-  id: `${VENDOR_ID}/${s.serviceCode}`,
-  org: VENDOR_ID,
-  name: s.serviceCode,
-  task: s.task,
+const CAT_DOG_ALGO: Algorithm = {
+  id: 'Admin/cat-dog-classifier',
+  org: 'Admin',
+  name: 'cat-dog-classifier',
+  task: 'image-classification',
+  business: 'security',
   framework: 'PyTorch',
-  tags: ['新能源场站', '可见光巡检', s.shortName],
-  summary: `${s.fullName}：${s.method}，输出${s.output}。`,
-  readme: readme(s),
-  likes: 0,
-  evalCount: 0,
-  updatedAt: SUBMITTED_AT,
-  versions: [version(s)],
-  files: files(s),
-  algoYaml: `name: ${s.serviceCode}
+  tags: ['猫狗识别', '图像分类', '基线算法', '安防周界'],
+  summary: '猫狗二分类图像识别算法，用于周界安防小动物误报过滤与宠物识别，提供 MobileNetV3 / ResNet-50+SE / ConvNeXt-Tiny 三个演进版本。',
+  readme: `# 猫狗图像识别（cat-dog-classifier）
+
+基于深度卷积网络的猫狗二分类算法，面向场站周界安防误报过滤与通用图像识别场景，支持输出 \`猫\` / \`狗\` 类别与置信度。
+
+## 版本路线说明
+
+本算法包含三个依次演进的版本，涵盖轻量化基线、注意力改进与现代主干网络三条技术路线：
+
+| 版本 | 技术路线 | 输入尺寸 | 显存占用 | 评测状态 |
+| --- | --- | --- | --- | --- |
+| \`v1.0.0\` | MobileNetV3-Large 轻量级基线 | 224×224 | 1.5 GB | 已评测 |
+| \`v2.0.0\` | ResNet-50 + SE 通道注意力 + 光照/裁剪增强 | 256×256 | 3.2 GB | 已评测 |
+| \`v3.0.0\` | ConvNeXt-Tiny + Mixup / 余弦退火（夜间与遮挡优化） | 288×288 | 4.0 GB | 暂未评测 |
+
+## 调用方式
+
+输入单张 RGB 图像（JPEG / PNG），返回按置信度降序排列的类别概率。
+
+\`\`\`python
+from predictor import Predictor
+
+model = Predictor(weights="weights/convnext_tiny_catdog_v3.pt")
+result = model.predict("sample.jpg")
+# {"predictions": [{"label": "猫", "score": 0.9842}, {"label": "狗", "score": 0.0158}]}
+\`\`\`
+
+## 输出格式
+
+\`\`\`json
+{
+  "predictions": [
+    { "label": "猫", "score": 0.9842 },
+    { "label": "狗", "score": 0.0158 }
+  ]
+}
+\`\`\`
+
+## 适用边界
+
+- 建议目标主体占画面面积不低于 10%，避免极端运动模糊；
+- \`v3.0.0\` 针对弱光与局部遮挡场景进行了数据增强，待平台评测基准验证后作为推荐生产版本。
+`,
+  likes: 12,
+  evalCount: 2,
+  updatedAt: '2026-11-20T09:30:00+08:00',
+  labels: ['猫', '狗'],
+  sampleImages: ['/datasets/cat-dog/cat_01.jpg', '/datasets/cat-dog/dog_01.jpg', '/datasets/cat-dog/cat_02.jpg'],
+  versions: [
+    {
+      version: 'v3.0.0',
+      status: 'ready',
+      createdAt: '2026-11-20T09:30:00+08:00',
+      createdBy: 'admin',
+      changelog: '切换至 ConvNeXt-Tiny 主干网络，引入 Mixup / CutMix 与余弦退火调度，重点优化夜间低照度与遮挡场景识别（暂未评测）',
+      imageDigest: 'sha256:' + fakeSha('Admin/cat-dog-classifier-v3.0.0-image'),
+      weightsHash: 'sha256:' + fakeSha('Admin/cat-dog-classifier-v3.0.0-weights'),
+      weightsSize: Math.round(112.4 * MiB),
+      baseImage: 'algohub/pytorch:2.4-cuda12.1',
+      gpuMem: 4,
+      buildLog: [
+        '[build] 管理员提交 v3.0.0，免审核直接进入构建队列',
+        '[build] 导入镜像 algohub/pytorch:2.4-cuda12.1',
+        '[build] 校验权重 weights/convnext_tiny_catdog_v3.pt 与 algo.yaml …… OK',
+        '[build] 冒烟测试（288×288 FP32 推理） …… OK',
+        '[build] 构建完成，版本可用（尚未发起评测）',
+      ],
+    },
+    {
+      version: 'v2.0.0',
+      status: 'ready',
+      createdAt: '2026-11-19T14:20:00+08:00',
+      createdBy: 'admin',
+      changelog: '升级主干为 ResNet-50 + SE 通道注意力模块，增加随机裁剪与光照抖动数据增强，显著提升复杂背景下的分类精度',
+      imageDigest: 'sha256:' + fakeSha('Admin/cat-dog-classifier-v2.0.0-image'),
+      weightsHash: 'sha256:' + fakeSha('Admin/cat-dog-classifier-v2.0.0-weights'),
+      weightsSize: Math.round(98.6 * MiB),
+      baseImage: 'algohub/pytorch:2.4-cuda12.1',
+      gpuMem: 3.2,
+      buildLog: [
+        '[build] 管理员提交 v2.0.0，免审核直接进入构建队列',
+        '[build] 导入镜像 algohub/pytorch:2.4-cuda12.1',
+        '[build] 校验权重 weights/resnet50_se_catdog_v2.pt 与 algo.yaml …… OK',
+        '[build] 冒烟测试（256×256 FP32 推理） …… OK',
+        '[build] 构建完成，版本可用',
+      ],
+    },
+    {
+      version: 'v1.0.0',
+      status: 'ready',
+      createdAt: '2026-11-18T16:00:00+08:00',
+      createdBy: 'admin',
+      changelog: '初始基线版本：采用 MobileNetV3-Large 轻量级卷积网络，主打低显存占用与边缘端高速推理',
+      imageDigest: 'sha256:' + fakeSha('Admin/cat-dog-classifier-v1.0.0-image'),
+      weightsHash: 'sha256:' + fakeSha('Admin/cat-dog-classifier-v1.0.0-weights'),
+      weightsSize: Math.round(21.5 * MiB),
+      baseImage: 'algohub/pytorch:2.4-cuda12.1',
+      gpuMem: 1.5,
+      buildLog: [
+        '[build] 管理员提交 v1.0.0，免审核直接进入构建队列',
+        '[build] 导入镜像 algohub/pytorch:2.4-cuda12.1',
+        '[build] 校验权重 weights/mobilenetv3_catdog_v1.pt 与 algo.yaml …… OK',
+        '[build] 冒烟测试（224×224 FP32 推理） …… OK',
+        '[build] 构建完成，版本可用',
+      ],
+    },
+  ],
+  files: [
+    { path: 'algo.yaml', size: 468, kind: 'config' },
+    { path: 'predictor.py', size: 3420, kind: 'code' },
+    { path: 'models/convnext_tiny.py', size: 6180, kind: 'code' },
+    { path: 'weights/convnext_tiny_catdog_v3.pt', size: Math.round(112.4 * MiB), kind: 'weights' },
+    { path: 'README.md', size: 1580, kind: 'doc' },
+  ],
+  algoYaml: `name: cat-dog-classifier
+version: 3.0.0
+task: image-classification
+business: security
+framework: PyTorch
+entry: predictor:Predictor
+base_image: algohub/pytorch:2.4-cuda12.1
+input:
+  size: [288, 288]
+  channels: 3
+resources:
+  gpu_mem: 4GB
+  cpu: 4
+  memory: 8GB
+weights:
+  - weights/convnext_tiny_catdog_v3.pt
+`,
+}
+
+export const algorithms: Algorithm[] = [
+  CAT_DOG_ALGO,
+  ...SEEDS.map((s) => ({
+    id: `${VENDOR_ID}/${s.serviceCode}`,
+    org: VENDOR_ID,
+    name: s.serviceCode,
+    task: s.task,
+    business: 'inspection' as const,
+    framework: 'PyTorch' as const,
+    tags: ['新能源场站', '可见光巡检', s.shortName],
+    summary: `${s.fullName}：${s.method}，输出${s.output}。`,
+    readme: readme(s),
+    likes: 0,
+    evalCount: 0,
+    updatedAt: SUBMITTED_AT,
+    versions: [version(s)],
+    files: files(s),
+    algoYaml: `name: ${s.serviceCode}
 version: 0.1
 task: ${s.task}
 framework: PyTorch
@@ -355,6 +500,7 @@ resources:
 weights:
 ${s.models.map((m) => `  - ${m.file}  # ${m.mib} MiB`).join('\n')}
 `,
-  labels: s.labels,
-  declaration: declaration(s),
-}))
+    labels: s.labels,
+    declaration: declaration(s),
+  })),
+]

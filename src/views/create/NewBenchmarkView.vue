@@ -2,7 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Plus, Trash2, Trophy } from 'lucide-vue-next'
-import { ApiError, createBenchmark, listDatasets } from '@/api'
+import { ApiError, createBenchmark, listDatasets, listEvaluators } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
@@ -15,6 +15,7 @@ const route = useRoute()
 const router = useRouter()
 const { can, user } = useSession()
 const { data: dsList } = useAsync(() => listDatasets({ pageSize: 999 }))
+const { data: evList } = useAsync(() => listEvaluators())
 
 const PRESETS: Record<string, MetricDef[]> = {
   'image-classification': [
@@ -44,24 +45,38 @@ const f = reactive({
   displayName: '',
   description: '',
   evaluatorKind: 'builtin' as 'builtin' | 'custom',
+  evaluatorId: '',
   script: null as { name: string; size: number } | null,
   metrics: [] as MetricDef[],
   perf: true,
 })
 const ds = computed(() => dsList.value?.items.find((d) => d.id === f.datasetId))
+const matchedEvaluators = computed(() => (evList.value ?? []).filter((e) => !ds.value || e.task === ds.value.task))
+const selectedEvaluator = computed(() => (evList.value ?? []).find((e) => e.id === f.evaluatorId))
 const builtin = computed(() => !!ds.value && BUILTIN_TASKS.includes(ds.value.task))
 watch(
-  ds,
-  (d) => {
+  [ds, evList],
+  ([d]) => {
     if (!d) return
-    f.datasetVersion = d.test?.versions[0].version ?? ""
-    f.evaluatorKind = BUILTIN_TASKS.includes(d.task) ? 'builtin' : 'custom'
-    f.metrics = JSON.parse(JSON.stringify(PRESETS[d.task] ?? [{ key: 'score', label: '得分', higherIsBetter: true, primary: true }]))
+    f.datasetVersion = d.test?.versions[0].version ?? ''
+    const firstReady = (evList.value ?? []).find((e) => e.task === d.task && e.status === 'ready')
+    if (firstReady && !f.evaluatorId) f.evaluatorId = firstReady.id
+    f.evaluatorKind = firstReady ? 'builtin' : BUILTIN_TASKS.includes(d.task) ? 'builtin' : 'custom'
+    f.metrics = JSON.parse(JSON.stringify(firstReady?.supportedMetrics ?? PRESETS[d.task] ?? [{ key: 'score', label: '得分', higherIsBetter: true, primary: true }]))
     if (!f.name && d.test) f.name = `${d.name.split('-')[0]}-${d.test.versions[0].version.replace('.0', '')}`
   },
   { immediate: true },
 )
-const evaluator = computed(() => (f.evaluatorKind === 'builtin' ? { name: `builtin/${ds.value?.task === 'image-classification' ? 'classification' : ds.value?.task === 'object-detection' ? 'coco-detection' : 'semantic-seg'}`, version: '2.0.1' } : { name: `${user.value.orgId}/custom-evaluator`, version: '0.1.0' }))
+watch(selectedEvaluator, (ev) => {
+  if (ev) f.metrics = JSON.parse(JSON.stringify(ev.supportedMetrics))
+})
+const evaluator = computed(() =>
+  selectedEvaluator.value
+    ? { name: selectedEvaluator.value.id, version: selectedEvaluator.value.version }
+    : f.evaluatorKind === 'builtin'
+      ? { name: `builtin-${ds.value?.task === 'image-classification' ? 'classification' : ds.value?.task === 'object-detection' ? 'coco-detection' : 'semantic-seg'}`, version: 'v2.0.1' }
+      : { name: `${user.value.orgId ?? 'Admin'}/custom-evaluator`, version: 'v0.1.0' },
+)
 const primaryKey = computed({
   get: () => f.metrics.find((m) => m.primary)?.key ?? '',
   set: (k) => f.metrics.forEach((m) => (m.primary = m.key === k)),
@@ -135,7 +150,12 @@ async function submit() {
 
         <div v-if="ds">
           <span class="label">评测器</span>
-          <div class="grid gap-2 sm:grid-cols-2">
+          <select v-if="matchedEvaluators.length" v-model="f.evaluatorId" class="input mb-2" aria-label="选择已配置的评测器">
+            <option v-for="e in matchedEvaluators" :key="e.id" :value="e.id" :disabled="e.status !== 'ready'">
+              {{ e.name }}（{{ e.id }}@{{ e.version }}）{{ e.status === 'ready' ? '' : e.status === 'uninitialized' ? ' · 待初始化' : ' · 已停用' }}
+            </option>
+          </select>
+          <div v-if="!selectedEvaluator" class="grid gap-2 sm:grid-cols-2">
             <label class="flex cursor-pointer gap-2 rounded-lg border p-3 text-sm" :class="[f.evaluatorKind === 'builtin' ? 'border-brand-500 ring-2 ring-brand-500/20' : 'border-gray-200 dark:border-gray-700', !builtin ? 'cursor-not-allowed opacity-50' : '']">
               <input v-model="f.evaluatorKind" type="radio" value="builtin" :disabled="!builtin" class="mt-0.5 accent-brand-600" />
               <span><span class="block font-medium">内置评测器</span><span class="text-xs text-gray-500">{{ builtin ? '分类 / 检测 / 分割，统一输出格式' : '该任务类型暂无内置评测器' }}</span></span>
@@ -145,7 +165,7 @@ async function submit() {
               <span><span class="block font-medium">自定义评测器</span><span class="text-xs text-gray-500">上传评测脚本，在隔离容器中运行</span></span>
             </label>
           </div>
-          <div v-if="f.evaluatorKind === 'custom'" class="mt-3">
+          <div v-if="!selectedEvaluator && f.evaluatorKind === 'custom'" class="mt-3">
             <FakeUpload v-model="f.script" accept=".zip,.py" label="上传评测器代码包" hint="实现 evaluate(predictions, ground_truth) -> dict" />
           </div>
           <p class="hint">将使用 <code class="mono">{{ evaluator.name }}@{{ evaluator.version }}</code></p>

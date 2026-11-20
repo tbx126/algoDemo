@@ -8,8 +8,10 @@ import type {
   Algorithm,
   AlgoVersion,
   Benchmark,
+  BusinessCategory,
   Dataset,
   EvalRun,
+  Evaluator,
   InferenceResult,
   ListQuery,
   Org,
@@ -28,25 +30,200 @@ import { algorithms as A0 } from '@/mock/algorithms'
 import { datasets as D0 } from '@/mock/datasets'
 import { benchmarks as B0 } from '@/mock/benchmarks'
 import { evalRuns as E0 } from '@/mock/evals'
+import { evaluators as EV0 } from '@/mock/evaluators'
 import { orgs as O0, users as U0 } from '@/mock/orgs'
 import { useSession } from '@/stores/session'
 import { fakeSha, hashStr, rng } from '@/utils/format'
+import { algoFullLabel } from '@/utils/display'
 
 // ---------- 原型数据持久化 ----------
 // 写操作（新建厂商、上传数据集、编辑信息等）保存到浏览器 localStorage，刷新后仍在。
 // 恢复时就地替换 mock 数组的内容，直接引用 mock 的组件（如头像、基准名称）也能看到最新数据。
-const STORE_KEY = 'algohub-db-v3'
-const SOURCES = { algorithms: A0, datasets: D0, benchmarks: B0, evals: E0, orgs: O0, users: U0 }
+const STORE_KEY = 'algohub-db-v6'
+const DEFAULT_TAGS = [...new Set([...A0.flatMap((a) => a.tags), '高精度', '实时推理', '边缘端'])]
+const T0: string[] = [...DEFAULT_TAGS]
+const DEL0: string[] = []
+const SOURCES = { algorithms: A0, datasets: D0, benchmarks: B0, evals: E0, evaluators: EV0, orgs: O0, users: U0, tags: T0, deletedRealIds: DEL0 }
 type DbKey = keyof typeof SOURCES
 try {
   const saved = JSON.parse(localStorage.getItem(STORE_KEY) ?? 'null') as Partial<Record<DbKey, unknown[]>> | null
-  if (saved) for (const k of Object.keys(SOURCES) as DbKey[]) if (Array.isArray(saved[k])) (SOURCES[k] as unknown[]).splice(0, SOURCES[k].length, ...saved[k]!)
+  if (saved) {
+    for (const k of Object.keys(SOURCES) as DbKey[]) if (Array.isArray(saved[k])) (SOURCES[k] as unknown[]).splice(0, SOURCES[k].length, ...saved[k]!)
+  }
 } catch {
   /* 数据损坏或不可用时使用默认 mock */
+}
+// 兼容旧版 localStorage 数据：补齐缺失的 business 字段、标签库与区域侧演示账号
+for (const a of SOURCES.algorithms) if (!a.business) a.business = 'inspection'
+for (const t of SOURCES.algorithms.flatMap((a) => a.tags)) if (t && !SOURCES.tags.includes(t)) SOURCES.tags.push(t)
+if (!SOURCES.users.some((u) => u.id === 'u4')) {
+  SOURCES.users.splice(1, 0, { id: 'u4', username: 'regional', displayName: '区域侧账号', email: 'regional@algohub.local', role: 'regional', orgId: null, active: true, createdAt: '2026-11-20T15:25:00+08:00', lastLoginAt: '' })
+}
+
+/**
+ * 将算法的任务分类、业务分类、推理框架、标签与简介同步更新到 algo.yaml，
+ * 仅原地更新配置字段，不改动 version 字段，也不触发新版本发布。
+ */
+function syncAlgoYaml(a: Pick<Algorithm, 'algoYaml' | 'task' | 'business' | 'framework' | 'tags' | 'summary'>): string {
+  const lines = a.algoYaml.replace(/\r\n/g, '\n').trimEnd().split('\n')
+
+  const setScalar = (key: string, val: string, afterKeys: string[]) => {
+    const idx = lines.findIndex((l) => new RegExp(`^${key}:`).test(l))
+    const line = `${key}: ${val}`
+    if (idx >= 0) {
+      lines[idx] = line
+      return
+    }
+    let insertAt = -1
+    for (const ak of afterKeys) {
+      const i = lines.findIndex((l) => new RegExp(`^${ak}:`).test(l))
+      if (i >= 0) {
+        insertAt = i + 1
+        break
+      }
+    }
+    if (insertAt >= 0) lines.splice(insertAt, 0, line)
+    else lines.push(line)
+  }
+
+  const setList = (key: string, items: string[], afterKeys: string[]) => {
+    const start = lines.findIndex((l) => new RegExp(`^${key}:`).test(l))
+    if (start >= 0) {
+      let end = start + 1
+      while (end < lines.length && /^\s+-\s/.test(lines[end])) end++
+      lines.splice(start, end - start)
+    }
+    if (!items.length) return
+    const block = [`${key}:`, ...items.map((x) => `  - ${x}`)]
+    if (start >= 0) {
+      lines.splice(start, 0, ...block)
+      return
+    }
+    let insertAt = -1
+    for (const ak of afterKeys) {
+      const i = lines.findIndex((l) => new RegExp(`^${ak}:`).test(l))
+      if (i >= 0) {
+        insertAt = i + 1
+        break
+      }
+    }
+    if (insertAt >= 0) lines.splice(insertAt, 0, ...block)
+    else lines.push(...block)
+  }
+
+  setScalar('task', a.task, ['version', 'name'])
+  setScalar('business', a.business, ['task', 'version', 'name'])
+  setScalar('framework', a.framework, ['business', 'task', 'version'])
+  setList('tags', a.tags, ['framework', 'business', 'task'])
+  if (a.summary) {
+    const safeSummary = /[:#\n"']/.test(a.summary) ? JSON.stringify(a.summary) : a.summary
+    setScalar('summary', safeSummary, ['name'])
+  }
+  return lines.join('\n') + '\n'
 }
 
 // 用 reactive 包一层，使 mock “写操作” 能实时反映到页面上
 const db = reactive(SOURCES)
+
+// ---------- 真实后端同步（猫狗数据集、算法、随机基线与评测完全走 FastAPI + PyTorch） ----------
+const REAL_ALGO_ID = 'Admin/cat-dog-classifier'
+const REAL_RANDOM_ID = 'Admin/random'
+const REAL_ALGO_IDS = new Set([REAL_ALGO_ID, REAL_RANDOM_ID])
+const REAL_DS_ID = 'Admin/cat-dog-dataset'
+const REAL_BENCH_ID = 'cat-dog-cls-bench'
+
+let realSynced = false
+let realSyncPromise: Promise<void> | null = null
+let realWarmContainers: QueueStatus['warmContainers'] = []
+
+function applyRealBootstrap(payload: {
+  algorithm: Algorithm
+  algorithms?: Algorithm[]
+  dataset: Dataset
+  benchmark: Benchmark
+  evals: EvalRun[]
+  warmContainers?: QueueStatus['warmContainers']
+}) {
+  const incoming = payload.algorithms?.length ? payload.algorithms : [payload.algorithm]
+  for (const algo of incoming) {
+    if (db.deletedRealIds.includes(algo.id)) continue
+    const ai = db.algorithms.findIndex((a) => a.id === algo.id)
+    if (ai >= 0) {
+      const prev = db.algorithms[ai]
+      const merged: Algorithm = {
+        ...algo,
+        task: prev.task || algo.task,
+        business: prev.business || algo.business,
+        framework: prev.framework || algo.framework,
+        tags: prev.tags.length ? prev.tags : algo.tags,
+        summary: prev.summary || algo.summary,
+        readme: prev.readme || algo.readme,
+      }
+      merged.algoYaml = syncAlgoYaml(merged)
+      db.algorithms[ai] = merged
+      for (const t of merged.tags) if (t && !db.tags.includes(t)) db.tags.push(t)
+    } else {
+      algo.algoYaml = syncAlgoYaml(algo)
+      db.algorithms.unshift(algo)
+      for (const t of algo.tags) if (t && !db.tags.includes(t)) db.tags.push(t)
+    }
+  }
+
+  if (!db.deletedRealIds.includes(REAL_DS_ID)) {
+    const di = db.datasets.findIndex((d) => d.id === REAL_DS_ID)
+    if (di >= 0) db.datasets[di] = payload.dataset
+    else db.datasets.unshift(payload.dataset)
+  }
+
+  if (!db.deletedRealIds.includes(REAL_DS_ID) && !db.deletedRealIds.includes(REAL_BENCH_ID)) {
+    const bi = db.benchmarks.findIndex((b) => b.id === REAL_BENCH_ID)
+    if (bi >= 0) db.benchmarks[bi] = payload.benchmark
+    else db.benchmarks.unshift(payload.benchmark)
+  }
+
+  // 用真实后端评测记录替换真实算法的评测记录（跳过已被删除的算法/基准）
+  for (let i = db.evals.length - 1; i >= 0; i--) {
+    if (REAL_ALGO_IDS.has(db.evals[i].algorithmId)) db.evals.splice(i, 1)
+  }
+  const activeEvals = payload.evals.filter((e) => !db.deletedRealIds.includes(e.algorithmId) && !db.deletedRealIds.includes(e.benchmarkId))
+  db.evals.unshift(...activeEvals)
+  if (payload.warmContainers) realWarmContainers = payload.warmContainers
+}
+
+async function syncRealBackend(force = false): Promise<void> {
+  if (realSynced && !force) return
+  if (realSyncPromise && !force) return realSyncPromise
+  realSyncPromise = (async () => {
+    try {
+      const resp = await fetch('/real-api/bootstrap')
+      if (!resp.ok) return
+      const payload = await resp.json()
+      applyRealBootstrap(payload)
+      realSynced = true
+    } catch {
+      /* 后端未启动时降级，不影响其余模块 */
+    } finally {
+      realSyncPromise = null
+    }
+  })()
+  return realSyncPromise
+}
+
+export interface RealDatasetRow {
+  file_name: string
+  label: string
+  url: string
+}
+
+export async function getRealDatasetPart(part: SplitName, limit = 200): Promise<{ part: SplitName; columns: string[]; total: number; rows: RealDatasetRow[] } | null> {
+  try {
+    const resp = await fetch(`/real-api/datasets/${REAL_DS_ID}/part/${part}?limit=${limit}`)
+    if (!resp.ok) return null
+    return await resp.json()
+  } catch {
+    return null
+  }
+}
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 watch(
@@ -102,9 +279,17 @@ function filterSort<T extends Algorithm | Dataset>(list: T[], q: ListQuery): T[]
   let r = visible(list)
   if (q.q) {
     const k = q.q.toLowerCase()
-    r = r.filter((x) => x.id.toLowerCase().includes(k) || x.summary.includes(q.q!) || x.tags.some((t) => t.toLowerCase().includes(k)))
+    r = r.filter(
+      (x) =>
+        x.id.toLowerCase().includes(k) ||
+        ('framework' in x && algoFullLabel(x).toLowerCase().includes(k)) ||
+        x.summary.includes(q.q!) ||
+        x.tags.some((t) => t.toLowerCase().includes(k)),
+    )
   }
   if (q.task) r = r.filter((x) => x.task === q.task)
+  if (q.business) r = r.filter((x) => 'business' in x && x.business === q.business)
+  if (q.tags?.length) r = r.filter((x) => q.tags!.every((tag) => x.tags.includes(tag)))
   if (q.org) r = r.filter((x) => x.org === q.org)
   if (q.framework) r = r.filter((x) => 'framework' in x && x.framework === q.framework)
   const sort = q.sort ?? 'trending'
@@ -121,12 +306,14 @@ function filterSort<T extends Algorithm | Dataset>(list: T[], q: ListQuery): T[]
 
 // ============ 算法  GET /api/algorithms ============
 export async function listAlgorithms(q: ListQuery = {}): Promise<Paginated<Algorithm>> {
+  await syncRealBackend()
   await delay()
   return clone(paginate(filterSort(db.algorithms, q), q))
 }
 
 // GET /api/algorithms/{org}/{name}
 export async function getAlgorithm(id: string): Promise<Algorithm> {
+  await syncRealBackend(REAL_ALGO_IDS.has(id))
   await delay()
   const a = db.algorithms.find((x) => x.id === id)
   if (!a) throw new ApiError(404, '算法不存在')
@@ -139,6 +326,7 @@ export async function createAlgorithm(input: {
   org: string
   name: string
   task: TaskType
+  business: BusinessCategory
   framework: Algorithm['framework']
   summary: string
   version: string
@@ -154,13 +342,16 @@ export async function createAlgorithm(input: {
   const id = `${input.org}/${input.name}`
   if (db.algorithms.some((a) => a.id === id)) throw new ApiError(409, '同名算法已存在')
   const status: AlgoVersion['status'] = can.value.needsReview ? 'pending_review' : 'building'
+  const tags = [...new Set((input.tags ?? (can.value.needsReview ? ['厂商提交'] : ['新提交'])).map((t) => t.trim()).filter(Boolean))]
+  for (const t of tags) if (!db.tags.includes(t)) db.tags.push(t)
   const algo: Algorithm = {
     id,
     org: input.org,
     name: input.name,
     task: input.task,
+    business: input.business,
     framework: input.framework,
-    tags: input.tags ?? (can.value.needsReview ? ['厂商提交'] : ['新提交']),
+    tags,
     summary: input.summary,
     declaration: input.declaration,
     readme: input.readme ?? `# ${input.name}\n\n${input.summary}\n\n> 由 ${user.value.displayName} 创建，README 可在提交后编辑。`,
@@ -194,11 +385,13 @@ export async function createAlgorithm(input: {
 
 // ============ 数据集  GET /api/datasets ============
 export async function listDatasets(q: ListQuery = {}): Promise<Paginated<Dataset>> {
+  await syncRealBackend()
   await delay()
   return clone(paginate(filterSort(db.datasets, q), q))
 }
 
 export async function getDataset(id: string): Promise<Dataset> {
+  await syncRealBackend(id === REAL_DS_ID)
   await delay()
   const d = db.datasets.find((x) => x.id === id)
   if (!d) throw new ApiError(404, '数据集不存在')
@@ -272,6 +465,7 @@ export async function uploadDatasetPart(id: string, partName: SplitName, up: Par
 
 // ============ Benchmark ============
 export async function listBenchmarks(q: { task?: TaskType | ''; q?: string } = {}): Promise<Benchmark[]> {
+  await syncRealBackend()
   await delay()
   return clone(
     db.benchmarks.filter((b) => {
@@ -283,6 +477,7 @@ export async function listBenchmarks(q: { task?: TaskType | ''; q?: string } = {
 }
 
 export async function getBenchmark(id: string): Promise<Benchmark> {
+  await syncRealBackend(id === REAL_BENCH_ID)
   await delay()
   const b = db.benchmarks.find((x) => x.id === id)
   if (!b) throw new ApiError(404, 'Benchmark 不存在')
@@ -306,6 +501,7 @@ export interface LeaderboardRow {
 // GET /api/benchmarks/{id}/leaderboard —— 每个“算法版本”只取最新有效结果；
 // 名次按全部上榜结果计算，厂商账号只返回自己的行（看得到自己的名次，看不到其他厂商）
 export async function getLeaderboard(benchId: string): Promise<LeaderboardRow[]> {
+  await syncRealBackend(benchId === REAL_BENCH_ID)
   await delay()
   const b = db.benchmarks.find((x) => x.id === benchId)!
   const primary = b.metrics.find((m) => m.primary)!
@@ -322,6 +518,7 @@ export async function getLeaderboard(benchId: string): Promise<LeaderboardRow[]>
 
 // ============ 评测任务 ============
 export async function listEvals(f: { algorithmId?: string; benchmarkId?: string; status?: string; mine?: boolean } = {}): Promise<EvalRun[]> {
+  await syncRealBackend(true)
   await delay()
   const { canSeeAlgo, user } = useSession()
   return clone(
@@ -340,6 +537,18 @@ export async function listEvals(f: { algorithmId?: string; benchmarkId?: string;
 }
 
 export async function getEval(id: string): Promise<EvalRun> {
+  if (id.startsWith('ev-real-')) {
+    await syncRealBackend()
+    const resp = await fetch(`/real-api/evals/${encodeURIComponent(id)}`)
+    if (resp.ok) {
+      const live = (await resp.json()) as EvalRun
+      const idx = db.evals.findIndex((x) => x.id === id)
+      if (idx >= 0) db.evals[idx] = live
+      else db.evals.unshift(live)
+      return clone(live)
+    }
+  }
+  await syncRealBackend()
   await delay()
   const r = db.evals.find((x) => x.id === id)
   if (!r) throw new ApiError(404, '评测记录不存在')
@@ -350,14 +559,67 @@ export async function getEval(id: string): Promise<EvalRun> {
 
 // POST /api/evals
 export async function createEval(input: { algorithmId: string; algoVersion: string; benchmarkId: string; params: EvalRun['params'] }): Promise<EvalRun> {
-  await delay(500)
   const { user, can, canSeeAlgo } = useSession()
+  await syncRealBackend()
   const a = db.algorithms.find((x) => x.id === input.algorithmId)!
   if (!can.value.runEval || !canSeeAlgo(a)) throw new ApiError(403, '只能评测自己的算法')
   const v = a.versions.find((x) => x.version === input.algoVersion)!
   if (v.status !== 'ready') throw new ApiError(400, '该算法版本尚不可用（未通过构建或审核）')
   const b = db.benchmarks.find((x) => x.id === input.benchmarkId)!
-  if (a.task !== b.task) throw new ApiError(400, '算法任务类型与 Benchmark 不匹配')
+  if (input.algorithmId !== REAL_RANDOM_ID && a.task !== b.task) throw new ApiError(400, '算法任务类型与 Benchmark 不匹配')
+
+  // 猫狗算法 / 随机基线 × 猫狗基准：走真实后端评测
+  if (REAL_ALGO_IDS.has(input.algorithmId) && input.benchmarkId === REAL_BENCH_ID) {
+    const resp = await fetch('/real-api/evals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...input, submittedBy: user.value.username }),
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: '真实评测提交失败' }))
+      throw new ApiError(resp.status, err.detail || '真实评测提交失败')
+    }
+    const run = (await resp.json()) as EvalRun
+    db.evals.unshift(run)
+    return clone(run)
+  }
+
+  // Admin/random 在其他任意任务基准上：立即生成对应指标结构的随机基线评测结果
+  if (input.algorithmId === REAL_RANDOM_ID) {
+    await delay(300)
+    const now = new Date().toISOString()
+    const metrics: Record<string, number> = {}
+    for (const m of b.metrics) {
+      metrics[m.key] = m.unit === '%' ? +(15 + Math.random() * 45).toFixed(2) : +(Math.random() * 100).toFixed(2)
+    }
+    for (const other of db.evals) {
+      if (other.algorithmId === REAL_RANDOM_ID && other.algoVersion === input.algoVersion && other.benchmarkId === b.id) other.isLatestValid = false
+    }
+    const run: EvalRun = {
+      id: `ev-rand-${1100 + db.evals.length}`,
+      ...input,
+      status: 'succeeded',
+      progress: 100,
+      submittedBy: user.value.username,
+      submittedAt: now,
+      startedAt: now,
+      finishedAt: now,
+      metrics,
+      imageDigest: v.imageDigest ?? '',
+      weightsHash: v.weightsHash ?? '',
+      evaluatorVersion: b.evaluatorVersion,
+      hardware: 'CPU · Python random',
+      durationSec: 1,
+      peakGpuMemGB: 0,
+      latencyMs: 0.1,
+      isLatestValid: true,
+      logs: [`[runner] Admin/random 在 ${b.displayName}（${b.task}）上完成全随机基线评测`, `[evaluator] ${JSON.stringify(metrics)}`],
+    }
+    db.evals.unshift(run)
+    return clone(run)
+  }
+
+  await delay(500)
   const id = `ev-${1100 + db.evals.length}`
   const run: EvalRun = {
     id,
@@ -389,21 +651,49 @@ export async function cancelEval(id: string): Promise<void> {
 
 // GET /api/scheduler/status
 export async function getQueueStatus(): Promise<QueueStatus> {
+  await syncRealBackend()
   await delay(120)
   return {
     gpuName: 'RTX 4060 Laptop',
     gpuMemTotal: 8,
-    gpuMemUsed: 0,
+    gpuMemUsed: realWarmContainers.reduce((s, w) => s + w.memGB, 0),
     running: db.evals.filter((r) => r.status === 'running').length,
     queued: db.evals.filter((r) => r.status === 'queued').length,
-    warmContainers: [],
+    warmContainers: clone(realWarmContainers),
   }
 }
 
 // ============ 单图推理  POST /api/algorithms/{id}/infer ============
 const PALETTE = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#84cc16', '#06b6d4', '#a855f7', '#eab308']
 
-export async function infer(algorithmId: string, version: string, input: { dataUrl?: string; fileName: string; size: number }): Promise<InferenceResult> {
+export async function infer(algorithmId: string, version: string, input: { dataUrl?: string; file?: File; fileName: string; size: number; task?: TaskType }): Promise<InferenceResult> {
+  // Admin/random：走后端全任务随机推理（忽略输入，每次输出永远随机）
+  if (algorithmId === REAL_RANDOM_ID) {
+    const fd = new FormData()
+    fd.append('task', input.task ?? 'image-classification')
+    const resp = await fetch(`/real-api/algorithms/${REAL_RANDOM_ID}/infer`, { method: 'POST', body: fd })
+    if (!resp.ok) throw new ApiError(resp.status, '随机推理服务调用失败')
+    return await resp.json()
+  }
+  // 猫狗算法：走真实 PyTorch 后端推理
+  if (algorithmId === REAL_ALGO_ID) {
+    const fd = new FormData()
+    fd.append('version', version)
+    if (input.file) {
+      fd.append('file', input.file, input.fileName)
+    } else if (input.dataUrl?.startsWith('/real-api/')) {
+      fd.append('sample_path', input.dataUrl)
+    } else if (input.dataUrl) {
+      const blob = await (await fetch(input.dataUrl)).blob()
+      fd.append('file', blob, input.fileName)
+    }
+    const resp = await fetch(`/real-api/algorithms/${REAL_ALGO_ID}/infer`, { method: 'POST', body: fd })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: '真实推理服务调用失败' }))
+      throw new ApiError(resp.status, err.detail || '真实推理服务调用失败')
+    }
+    return await resp.json()
+  }
   const a = db.algorithms.find((x) => x.id === algorithmId)!
   const warm = false // 原型：每次推理按冷启动处理
   const queuedMs = warm ? 0 : 1800 // 冷启动
@@ -415,8 +705,15 @@ export async function infer(algorithmId: string, version: string, input: { dataU
 
   if (a.task === 'image-classification' || a.task === 'signal-processing') {
     const logits = labels.map(() => r() ** 3)
-    const top = Math.floor(r() * labels.length)
-    logits[top] += 2.5
+    const fname = input.fileName.toLowerCase()
+    const hinted =
+      (fname.includes('cat') ? labels.indexOf('猫') : -1) >= 0
+        ? labels.indexOf('猫')
+        : fname.includes('dog')
+          ? labels.indexOf('狗')
+          : -1
+    const top = hinted >= 0 ? hinted : Math.floor(r() * labels.length)
+    logits[top] += hinted >= 0 ? 18 : 2.5
     const sum = logits.reduce((s, x) => s + x, 0)
     const items = labels.map((l, i) => ({ label: l, score: logits[i] / sum })).sort((x, y) => y.score - x.score)
     return { ...base, classification: items.slice(0, 5), raw: { predictions: items.slice(0, 5).map((x) => ({ label: x.label, score: +x.score.toFixed(4) })) } }
@@ -556,14 +853,214 @@ export async function updateVendor(
   return clone(org)
 }
 
-// PATCH /api/algorithms/{id}
-export async function updateAlgorithm(id: string, patch: Partial<Pick<Algorithm, 'summary' | 'tags' | 'task' | 'framework' | 'readme'>>): Promise<Algorithm> {
+// PATCH /api/algorithms/{id} —— 原地更新算法信息与 algo.yaml，不触发大版本更新
+export async function updateAlgorithm(id: string, patch: Partial<Pick<Algorithm, 'summary' | 'tags' | 'task' | 'business' | 'framework' | 'readme'>>): Promise<Algorithm> {
   await delay(300)
   requireAdmin()
   const a = db.algorithms.find((x) => x.id === id)
   if (!a) throw new ApiError(404, '算法不存在')
+  if (patch.tags) {
+    patch.tags = [...new Set(patch.tags.map((t) => t.trim()).filter(Boolean))]
+    for (const t of patch.tags) if (!db.tags.includes(t)) db.tags.push(t)
+  }
   Object.assign(a, patch, { updatedAt: new Date().toISOString() })
+  a.algoYaml = syncAlgoYaml(a)
   return clone(a)
+}
+
+// PATCH /api/algorithms/{id}/tags —— 管理员或该算法所属厂商可快捷增删标签（同步更新 algo.yaml）
+export async function updateAlgorithmTags(id: string, tags: string[]): Promise<Algorithm> {
+  await delay(200)
+  const { can, canSeeAlgo } = useSession()
+  const a = db.algorithms.find((x) => x.id === id)
+  if (!a) throw new ApiError(404, '算法不存在')
+  if (!can.value.createAlgorithm || !canSeeAlgo(a)) throw new ApiError(403, '无权修改该算法标签')
+  const cleaned = [...new Set(tags.map((t) => t.trim()).filter(Boolean))]
+  for (const t of cleaned) if (!db.tags.includes(t)) db.tags.push(t)
+  a.tags = cleaned
+  a.algoYaml = syncAlgoYaml(a)
+  a.updatedAt = new Date().toISOString()
+  return clone(a)
+}
+
+// ============ 评测器管理 ============
+export async function listEvaluators(q: { task?: TaskType | ''; kind?: '' | 'builtin' | 'custom'; status?: Evaluator['status'] | ''; q?: string } = {}): Promise<Evaluator[]> {
+  await delay(100)
+  const k = q.q?.trim().toLowerCase() ?? ''
+  return clone(
+    db.evaluators.filter((ev) => {
+      if (q.task && ev.task !== q.task) return false
+      if (q.kind && ev.kind !== q.kind) return false
+      if (q.status && ev.status !== q.status) return false
+      if (k && !(ev.id.toLowerCase().includes(k) || ev.name.toLowerCase().includes(k) || ev.description.toLowerCase().includes(k))) return false
+      return true
+    }),
+  )
+}
+
+export async function getEvaluator(id: string): Promise<Evaluator> {
+  await delay(100)
+  const ev = db.evaluators.find((x) => x.id === id)
+  if (!ev) throw new ApiError(404, '评测器不存在')
+  return clone(ev)
+}
+
+export async function createEvaluator(
+  input: Pick<Evaluator, 'id' | 'name' | 'version' | 'task' | 'description' | 'entrypoint' | 'runtime' | 'supportedMetrics' | 'config' | 'script'> & { kind?: Evaluator['kind'] },
+): Promise<Evaluator> {
+  await delay(300)
+  requireAdmin()
+  const id = input.id.trim()
+  if (!/^[a-z0-9][a-z0-9-_]{1,63}$/.test(id)) throw new ApiError(400, '评测器标识需由小写字母、数字、- 或 _ 组成（2–64 位）')
+  if (db.evaluators.some((x) => x.id === id)) throw new ApiError(409, '同名评测器标识已存在')
+  const ev: Evaluator = {
+    ...input,
+    id,
+    kind: input.kind ?? 'custom',
+    status: 'uninitialized',
+    updatedAt: new Date().toISOString(),
+    updatedBy: useSession().user.value.username,
+  }
+  db.evaluators.unshift(ev)
+  return clone(ev)
+}
+
+/** 初始化（或重新初始化）评测器：校验入口、脚本与指标定义，通过后置为 ready */
+export async function initializeEvaluator(id: string): Promise<Evaluator> {
+  await delay(450)
+  requireAdmin()
+  const ev = db.evaluators.find((x) => x.id === id)
+  if (!ev) throw new ApiError(404, '评测器不存在')
+  if (!ev.entrypoint.trim()) throw new ApiError(400, '初始化失败：缺少入口函数（entrypoint）')
+  if (!ev.supportedMetrics.length) throw new ApiError(400, '初始化失败：至少需定义一项评测指标')
+  if (!ev.script.trim()) throw new ApiError(400, '初始化失败：评测脚本不能为空')
+  ev.status = 'ready'
+  ev.updatedAt = new Date().toISOString()
+  ev.updatedBy = useSession().user.value.username
+  return clone(ev)
+}
+
+/** 修改评测器信息、配置参数、指标定义、脚本或启停状态 */
+export async function updateEvaluator(
+  id: string,
+  patch: Partial<Pick<Evaluator, 'name' | 'version' | 'task' | 'status' | 'description' | 'entrypoint' | 'runtime' | 'supportedMetrics' | 'config' | 'script'>>,
+): Promise<Evaluator> {
+  await delay(250)
+  requireAdmin()
+  const ev = db.evaluators.find((x) => x.id === id)
+  if (!ev) throw new ApiError(404, '评测器不存在')
+  Object.assign(ev, patch, { updatedAt: new Date().toISOString(), updatedBy: useSession().user.value.username })
+  // 同步更新引用该评测器的 Benchmark 版本号
+  if (patch.version) {
+    for (const b of db.benchmarks) if (b.evaluator === id) b.evaluatorVersion = patch.version
+  }
+  return clone(ev)
+}
+
+export async function deleteEvaluator(id: string): Promise<void> {
+  await delay(250)
+  requireAdmin()
+  const idx = db.evaluators.findIndex((x) => x.id === id)
+  if (idx < 0) throw new ApiError(404, '评测器不存在')
+  if (db.evaluators[idx].kind === 'builtin') throw new ApiError(400, '平台内置评测器不可删除')
+  if (db.benchmarks.some((b) => b.evaluator === id)) throw new ApiError(400, '该评测器正被评测基准引用，无法删除')
+  db.evaluators.splice(idx, 1)
+}
+
+// ============ 标签管理 ============
+export interface TagSummary {
+  name: string
+  count: number
+}
+
+// GET /api/tags
+export async function listTags(): Promise<TagSummary[]> {
+  await delay(80)
+  const algos = visible(db.algorithms)
+  const names = [...new Set([...db.tags, ...algos.flatMap((a) => a.tags)])]
+  return names.map((name) => ({ name, count: algos.filter((a) => a.tags.includes(name)).length }))
+}
+
+// POST /api/tags
+export async function createTag(rawName: string): Promise<string> {
+  await delay(150)
+  if (!useSession().can.value.createAlgorithm) throw new ApiError(403, '当前账号无权管理标签')
+  const name = rawName.trim()
+  if (!name) throw new ApiError(400, '标签名称不能为空')
+  if (db.tags.includes(name)) throw new ApiError(409, '标签已存在')
+  db.tags.push(name)
+  return name
+}
+
+// PATCH /api/tags/{oldName} —— 修改标签名称并同步到所有算法与数据集
+export async function renameTag(oldName: string, rawNewName: string): Promise<string> {
+  await delay(200)
+  if (!useSession().can.value.createAlgorithm) throw new ApiError(403, '当前账号无权管理标签')
+  const newName = rawNewName.trim()
+  if (!newName) throw new ApiError(400, '标签名称不能为空')
+  if (newName === oldName) return newName
+  if (db.tags.includes(newName)) throw new ApiError(409, `标签「${newName}」已存在`)
+  const idx = db.tags.indexOf(oldName)
+  if (idx >= 0) db.tags[idx] = newName
+  else db.tags.push(newName)
+  for (const a of db.algorithms) {
+    if (a.tags.includes(oldName)) {
+      a.tags = [...new Set(a.tags.map((t) => (t === oldName ? newName : t)))]
+      a.algoYaml = syncAlgoYaml(a)
+    }
+  }
+  for (const d of db.datasets) {
+    if (d.tags.includes(oldName)) d.tags = [...new Set(d.tags.map((t) => (t === oldName ? newName : t)))]
+  }
+  return newName
+}
+
+// DELETE /api/tags/{name} —— 删除标签并从所有算法移除
+export async function deleteTag(name: string): Promise<void> {
+  await delay(200)
+  if (!useSession().can.value.createAlgorithm) throw new ApiError(403, '当前账号无权管理标签')
+  const idx = db.tags.indexOf(name)
+  if (idx >= 0) db.tags.splice(idx, 1)
+  for (const a of db.algorithms) {
+    if (a.tags.includes(name)) {
+      a.tags = a.tags.filter((t) => t !== name)
+      a.algoYaml = syncAlgoYaml(a)
+    }
+  }
+}
+
+// DELETE /api/algorithms/{id} —— 管理员删除算法及其关联评测记录
+export async function deleteAlgorithm(id: string): Promise<void> {
+  await delay(250)
+  requireAdmin()
+  const idx = db.algorithms.findIndex((x) => x.id === id)
+  if (idx < 0) throw new ApiError(404, '算法不存在')
+  db.algorithms.splice(idx, 1)
+  for (let i = db.evals.length - 1; i >= 0; i--) {
+    if (db.evals[i].algorithmId === id) db.evals.splice(i, 1)
+  }
+  if (REAL_ALGO_IDS.has(id) && !db.deletedRealIds.includes(id)) db.deletedRealIds.push(id)
+}
+
+// DELETE /api/datasets/{id} —— 管理员删除数据集及其关联评测基准与评测记录
+export async function deleteDataset(id: string): Promise<void> {
+  await delay(250)
+  requireAdmin()
+  const idx = db.datasets.findIndex((x) => x.id === id)
+  if (idx < 0) throw new ApiError(404, '数据集不存在')
+  db.datasets.splice(idx, 1)
+  const removedBenches = new Set<string>()
+  for (let i = db.benchmarks.length - 1; i >= 0; i--) {
+    if (db.benchmarks[i].datasetId === id) {
+      removedBenches.add(db.benchmarks[i].id)
+      if (!db.deletedRealIds.includes(db.benchmarks[i].id)) db.deletedRealIds.push(db.benchmarks[i].id)
+      db.benchmarks.splice(i, 1)
+    }
+  }
+  for (let i = db.evals.length - 1; i >= 0; i--) {
+    if (removedBenches.has(db.evals[i].benchmarkId)) db.evals.splice(i, 1)
+  }
+  if (id === REAL_DS_ID && !db.deletedRealIds.includes(id)) db.deletedRealIds.push(id)
 }
 
 // PATCH /api/datasets/{id}
@@ -642,7 +1139,10 @@ export async function quickSearch(q: string) {
   const k = q.toLowerCase()
   const { canSeeAlgo } = useSession()
   return {
-    algorithms: db.algorithms.filter((a) => canSeeAlgo(a) && a.id.toLowerCase().includes(k)).slice(0, 5).map((a) => ({ id: a.id, task: a.task })),
+    algorithms: db.algorithms
+      .filter((a) => canSeeAlgo(a) && (a.id.toLowerCase().includes(k) || algoFullLabel(a).toLowerCase().includes(k)))
+      .slice(0, 5)
+      .map((a) => ({ id: a.id, task: a.task })),
     datasets: db.datasets.filter((d) => d.id.toLowerCase().includes(k)).slice(0, 4).map((d) => ({ id: d.id, task: d.task })),
     benchmarks: db.benchmarks.filter((b) => b.displayName.includes(q) || b.name.includes(k)).slice(0, 3).map((b) => ({ id: b.id, displayName: b.displayName })),
   }
@@ -661,6 +1161,7 @@ export interface Overview {
 
 // GET /api/overview —— 首页总览（按当前身份的可见范围统计）
 export async function overview(): Promise<Overview> {
+  await syncRealBackend(true)
   await delay(120)
   const { canSeeAlgo } = useSession()
   const now = Date.now()

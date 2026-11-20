@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Ban, CircleAlert, Clock, Cpu, FileJson, FlaskConical, Gauge, RotateCw, ScrollText } from 'lucide-vue-next'
 import { cancelEval, createEval, getBenchmark, getEval, ApiError } from '@/api'
@@ -7,6 +7,7 @@ import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
 import { fmtDate, fmtDuration, fmtMetric, hashStr } from '@/utils/format'
+import { algoFullLabel } from '@/utils/display'
 import { datasets } from '@/mock/datasets'
 import StateView from '@/components/ui/StateView.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
@@ -19,15 +20,47 @@ const route = useRoute()
 const router = useRouter()
 const { can, user } = useSession()
 const { data: run, loading, error, reload } = useAsync(() => getEval(route.params.id as string))
-const { data: bench } = useAsync(async () => (run.value ? getBenchmark(run.value.benchmarkId) : undefined), [run])
+// 真实评测任务运行中静默轮询进度与日志（不触发 loading 闪烁）
+let pollTimer: ReturnType<typeof setInterval> | undefined
+let polling = false
+watch(
+  () => run.value?.status,
+  (st) => {
+    if (pollTimer) {
+      clearInterval(pollTimer)
+      pollTimer = undefined
+    }
+    if (st === 'queued' || st === 'running') {
+      pollTimer = setInterval(async () => {
+        if (polling) return
+        polling = true
+        try {
+          run.value = await getEval(route.params.id as string)
+        } catch {
+          /* ignore transient poll error */
+        } finally {
+          polling = false
+        }
+      }, 1200)
+    }
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => pollTimer && clearInterval(pollTimer))
+const benchId = computed(() => run.value?.benchmarkId ?? '')
+const { data: bench } = useAsync(async () => (benchId.value ? getBenchmark(benchId.value) : undefined), [benchId])
 const ds = computed(() => datasets.find((d) => d.id === bench.value?.datasetId))
 const primary = computed(() => bench.value?.metrics.find((m) => m.primary))
 
 const canCancel = computed(() => run.value && (run.value.status === 'queued' || run.value.status === 'running') && (can.value.admin || run.value.submittedBy === user.value.username))
 
-// 每类指标（模拟）
+// 每类指标：优先展示真实评测返回的 perClass，否则按基准降级
 const perClass = computed(() => {
-  if (!run.value || !ds.value || !primary.value || run.value.status !== 'succeeded') return []
+  if (!run.value || run.value.status !== 'succeeded') return []
+  if (run.value.perClass?.length) {
+    return [...run.value.perClass].map((c) => ({ label: c.label, v: c.value })).sort((a, b) => a.v - b.v)
+  }
+  if (!ds.value || !primary.value) return []
   const base = run.value.metrics[primary.value.key]
   return ds.value.classes
     .filter((c) => !c.startsWith('……'))
@@ -57,14 +90,14 @@ async function rerun() {
 </script>
 
 <template>
-  <StateView :loading="loading" :error="error">
+  <StateView :loading="loading && !run" :error="error">
     <div v-if="run" class="container-page pt-8">
       <div class="flex flex-wrap items-start gap-4">
         <div class="min-w-0 flex-1">
           <p class="flex items-center gap-1.5 text-sm text-gray-500"><FlaskConical class="size-4" />评测任务 <span class="mono">{{ run.id }}</span></p>
           <h1 class="mt-1 flex flex-wrap items-center gap-2 text-xl font-semibold text-gray-900 dark:text-white">
             <OrgAvatar :org="run.algorithmId.split('/')[0]" :size="22" />
-            <RouterLink :to="`/algorithms/${run.algorithmId}`" class="mono hover:text-brand-600">{{ run.algorithmId }}</RouterLink>
+            <RouterLink :to="`/algorithms/${run.algorithmId}`" class="hover:text-brand-600">{{ algoFullLabel(run.algorithmId) }}</RouterLink>
             <span class="mono text-gray-400">{{ run.algoVersion }}</span>
             <span class="text-gray-300">×</span>
             <RouterLink :to="`/benchmarks/${run.benchmarkId}`" class="hover:text-brand-600">{{ bench?.displayName ?? run.benchmarkId }}</RouterLink>
@@ -125,8 +158,32 @@ async function rerun() {
           <!-- 错误样例 -->
           <div v-if="can.testAccess && ds && run.status === 'succeeded' && !['signal-processing', 'optimization'].includes(ds.task)" class="card p-5">
             <h2 class="section-title mb-1">错误样例</h2>
-            <p class="mb-4 text-xs text-gray-500">来自测试集，仅管理员可见</p>
-            <div class="grid grid-cols-2 gap-2 md:grid-cols-4">
+            <p class="mb-4 text-xs text-gray-500">
+              来自测试集，仅管理员可见<template v-if="run.errorSamples">（展示 {{ run.errorSamples.length }} 个真实误判样本）</template>
+            </p>
+            <template v-if="run.errorSamples">
+              <p v-if="!run.errorSamples.length" class="text-sm text-emerald-600">测试集全部预测正确，无错误样例。</p>
+              <div v-else class="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+                <div v-for="item in run.errorSamples" :key="item.fileName" class="overflow-hidden rounded-lg border border-gray-100 dark:border-gray-800">
+                  <div class="relative bg-gray-100 dark:bg-gray-900">
+                    <img :src="item.url" :alt="item.fileName" class="block aspect-[4/3] w-full object-cover" loading="lazy" />
+                    <span class="pointer-events-none absolute top-1.5 left-1.5 rounded bg-gray-900/75 px-1.5 py-0.5 text-[11px] font-medium text-white">
+                      真值：{{ item.groundTruth }}
+                    </span>
+                  </div>
+                  <div class="space-y-0.5 px-2 py-1.5 text-[11px]">
+                    <div class="mono truncate text-gray-500" :title="item.fileName">{{ item.fileName.replace('images/', '') }}</div>
+                    <div class="flex items-center justify-between gap-1">
+                      <span class="rounded bg-rose-100 px-1.5 py-0.5 font-medium text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">
+                        误判为 {{ item.predicted }}
+                      </span>
+                      <span class="mono text-gray-400">{{ (item.confidence * 100).toFixed(1) }}%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+            <div v-else class="grid grid-cols-2 gap-2 md:grid-cols-4">
               <div v-for="i in 8" :key="i" class="overflow-hidden rounded-lg border border-gray-100 dark:border-gray-800">
                 <SynthImage :seed="ds.previewSeed + 90000 + i * 13" :task="ds.task" :classes="ds.classes" annotate :width="240" :height="180" />
                 <div class="flex items-center justify-between px-2 py-1 text-[11px]">

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { BookOpen, Download, Pencil, Eye, EyeOff, FlaskConical, GitCommitVertical, Heart, Lock, Table2, Trophy, Upload } from 'lucide-vue-next'
-import { getDataset, listBenchmarks } from '@/api'
+import { BookOpen, Download, Pencil, Eye, EyeOff, FlaskConical, GitCommitVertical, Heart, Lock, Table2, Trash2, Trophy, Upload } from 'lucide-vue-next'
+import { ApiError, deleteDataset, getDataset, getRealDatasetPart, listBenchmarks, type RealDatasetRow } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { fmtBytes, fmtNum, timeAgo } from '@/utils/format'
@@ -29,6 +29,22 @@ const setTab = (t: string) => router.replace({ query: t === 'card' ? {} : { tab:
 
 const { data: ds, loading, error } = useAsync(() => getDataset(id.value))
 const editOpen = ref(false)
+const deleteOpen = ref(false)
+const deleting = ref(false)
+async function doDelete() {
+  if (!ds.value || deleting.value) return
+  deleting.value = true
+  try {
+    await deleteDataset(ds.value.id)
+    toast(`数据集「${ds.value.id}」已删除`, 'info')
+    deleteOpen.value = false
+    router.push('/datasets')
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : '删除失败', 'error')
+  } finally {
+    deleting.value = false
+  }
+}
 const toc = ref<TocItem[]>([])
 const { data: allBench } = useAsync(() => listBenchmarks())
 const benches = computed(() => allBench.value?.filter((b) => b.datasetId === id.value) ?? [])
@@ -49,8 +65,28 @@ const offset = computed(() => (partName.value === 'train' ? 0 : 90000) + (part.v
 const showAnn = ref(true)
 const count = ref(18)
 watch(partName, () => (count.value = 18))
+
+// 真实后端数据集分片（如 Admin/cat-dog-dataset）：直接读取真实 labels.csv 与真实图片
+const isRealDataset = computed(() => ds.value?.id === 'Admin/cat-dog-dataset')
+const realRows = ref<RealDatasetRow[]>([])
+watch(
+  [isRealDataset, partName, locked],
+  async ([isReal, p, isLocked]) => {
+    if (!isReal || isLocked) {
+      realRows.value = []
+      return
+    }
+    const res = await getRealDatasetPart(p, 500)
+    realRows.value = res?.rows ?? []
+  },
+  { immediate: true },
+)
+
 const seedOf = (i: number) => (ds.value?.previewSeed ?? 0) + offset.value + i
 const csvRows = computed(() => {
+  if (isRealDataset.value && realRows.value.length) {
+    return realRows.value.slice(0, 12).map((r, i) => ({ idx: i + 1, row: [r.file_name, r.label] }))
+  }
   if (!ds.value || !part.value) return []
   const out: { idx: number; row: string[] }[] = []
   for (let i = 1; out.length < 12 && i < 40; i++) for (const row of rowsFor(seedOf(i), i, partName.value, ds.value.task, ds.value.classes, part.value.columns)) out.push({ idx: i, row })
@@ -61,9 +97,24 @@ const classMax = computed(() => Math.max(1, ...Object.values(part.value?.classCo
 // 单个样本详情
 const zoom = ref<number | null>(null)
 const zoomOpen = computed({ get: () => zoom.value !== null, set: (v) => !v && (zoom.value = null) })
-const zoomRows = computed(() => (ds.value && part.value && zoom.value !== null ? rowsFor(seedOf(zoom.value), zoom.value, partName.value, ds.value.task, ds.value.classes, part.value.columns) : []))
+const zoomReal = computed(() => (isRealDataset.value && zoom.value !== null ? realRows.value[zoom.value - 1] ?? null : null))
+const zoomRows = computed(() => {
+  if (zoomReal.value) return [[zoomReal.value.file_name, zoomReal.value.label]]
+  return ds.value && part.value && zoom.value !== null ? rowsFor(seedOf(zoom.value), zoom.value, partName.value, ds.value.task, ds.value.classes, part.value.columns) : []
+})
 
 function download(p: SplitName) {
+  if (isRealDataset.value) {
+    // 大体积真实数据集使用原生 <a> 流式下载，避免浏览器 JS 内存缓存数百 MB Blob
+    const a = document.createElement('a')
+    a.href = `/real-api/datasets/${ds.value!.id}/download/${p}`
+    a.download = `cat-dog-dataset-${p}-v1.0.zip`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    toast(`已开始下载真实${PART_LABEL[p]}压缩包（images/ + labels.csv）`)
+    return
+  }
   toast(`已生成${PART_LABEL[p]} ${ds.value?.[p]?.versions[0].version} 的下载链接（images/ + labels.csv，模拟）`)
 }
 </script>
@@ -83,6 +134,7 @@ function download(p: SplitName) {
               <Heart class="size-3.5" :class="liked ? 'fill-rose-500 text-rose-500' : ''" />{{ ds.likes + (liked ? 1 : 0) }}
             </button>
             <button v-if="can.admin" class="btn-default ml-auto text-sm" @click="editOpen = true"><Pencil class="size-4" />编辑</button>
+            <button v-if="can.admin" class="btn-danger text-sm" @click="deleteOpen = true"><Trash2 class="size-4" />删除</button>
             <RouterLink v-if="can.createDataset" :to="`/datasets/new?dataset=${ds.id}`" class="btn-default text-sm" :class="{ 'ml-auto': !can.admin }"><Upload class="size-4" />上传新版本</RouterLink>
           </div>
           <div class="mt-3 flex flex-wrap items-center gap-1.5">
@@ -103,18 +155,22 @@ function download(p: SplitName) {
       <div class="container-page pt-6">
         <!-- ========== 卡片 ========== -->
         <div v-if="tab === 'card'" class="flex flex-col gap-8 lg:flex-row">
-          <aside class="hidden w-52 shrink-0 xl:block">
-            <div class="sticky top-20"><DocOutline :items="toc" /></div>
-          </aside>
+          <DocOutline :items="toc" />
           <div class="min-w-0 flex-1">
             <div class="mb-6 overflow-hidden rounded-xl border border-gray-100 dark:border-gray-800">
               <div class="flex items-center justify-between border-b border-gray-100 px-3 py-2 text-sm dark:border-gray-800">
                 <span class="font-medium">训练集预览</span>
                 <button class="cursor-pointer text-xs text-brand-600 hover:underline" @click="setTab('train')">查看训练集 →</button>
               </div>
-              <div class="grid grid-cols-3 gap-1 p-1 sm:grid-cols-6">
+              <div v-if="ds.realPreview?.train?.length" class="grid grid-cols-3 gap-1 p-1 sm:grid-cols-6">
+                <div v-for="item in ds.realPreview.train" :key="item.file_name" class="relative overflow-hidden rounded-md bg-gray-100 dark:bg-gray-900">
+                  <img :src="item.url" :alt="item.label" class="block aspect-[4/3] w-full object-cover" loading="lazy" />
+                  <span class="pointer-events-none absolute top-1 left-1 rounded bg-gray-900/75 px-1.5 py-0.5 text-[11px] font-medium text-white">{{ item.label }}</span>
+                </div>
+              </div>
+              <div v-else class="grid grid-cols-3 gap-1 p-1 sm:grid-cols-6">
                 <div v-for="i in 6" :key="i" class="overflow-hidden rounded-md">
-                  <SynthImage :seed="ds.previewSeed + i" :task="ds.task" :classes="ds.classes" annotate :width="240" :height="180" />
+                  <SynthImage :seed="ds.previewSeed + i" :task="ds.task" :classes="ds.classes" :sample-images="ds.sampleImages" annotate :width="240" :height="180" />
                 </div>
               </div>
             </div>
@@ -219,14 +275,28 @@ function download(p: SplitName) {
               <button class="btn-default py-1 text-xs" @click="showAnn = !showAnn"><component :is="showAnn ? Eye : EyeOff" class="size-3.5" />{{ showAnn ? '叠加标注' : '原图' }}</button>
               <span class="text-xs text-gray-500">点击查看该样本在 labels.csv 中的行</span>
             </div>
-            <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
+            <div v-if="isRealDataset && realRows.length" class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
+              <button
+                v-for="(item, idx) in realRows.slice(0, count)"
+                :key="item.file_name"
+                class="group cursor-pointer overflow-hidden rounded-lg border border-gray-100 text-left dark:border-gray-800"
+                @click="zoom = idx + 1"
+              >
+                <div class="relative overflow-hidden bg-gray-100 dark:bg-gray-900">
+                  <img :src="item.url" :alt="item.label" class="block aspect-[4/3] w-full object-cover transition group-hover:opacity-90" loading="lazy" />
+                  <span v-if="showAnn" class="pointer-events-none absolute top-1.5 left-1.5 rounded bg-gray-900/75 px-1.5 py-0.5 text-[11px] font-medium text-white">{{ item.label }}</span>
+                </div>
+                <div class="mono truncate px-2 py-1 text-[11px] text-gray-500">{{ item.file_name.replace('images/', '') }}</div>
+              </button>
+            </div>
+            <div v-else class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
               <button v-for="i in count" :key="partName + version + i" class="group cursor-pointer overflow-hidden rounded-lg border border-gray-100 text-left dark:border-gray-800" @click="zoom = i">
-                <SynthImage :seed="seedOf(i)" :task="ds.task" :classes="ds.classes" :annotate="showAnn" :width="240" :height="180" class="transition group-hover:opacity-90" />
+                <SynthImage :seed="seedOf(i)" :task="ds.task" :classes="ds.classes" :sample-images="ds.sampleImages" :annotate="showAnn" :width="240" :height="180" class="transition group-hover:opacity-90" />
                 <div class="mono truncate px-2 py-1 text-[11px] text-gray-500">{{ fileNameOf(partName, i, spec?.dataExt).replace('images/', '') }}</div>
               </button>
             </div>
             <div class="mt-6 text-center">
-              <button v-if="count < 72" class="btn-default" @click="count += 18">加载更多</button>
+              <button v-if="count < (isRealDataset ? realRows.length : 72)" class="btn-default" @click="count += 18">加载更多</button>
             </div>
           </template>
         </div>
@@ -262,10 +332,11 @@ function download(p: SplitName) {
         </div>
       </div>
 
-      <Modal v-model:open="zoomOpen" :title="zoom !== null ? fileNameOf(partName, zoom, spec?.dataExt) : ''" width="max-w-3xl">
+      <Modal v-model:open="zoomOpen" :title="zoomReal ? zoomReal.file_name : zoom !== null ? fileNameOf(partName, zoom, spec?.dataExt) : ''" width="max-w-3xl">
         <div v-if="zoom !== null && part" class="space-y-4">
-          <div class="overflow-hidden rounded-lg">
-            <SynthImage :seed="seedOf(zoom)" :task="ds.task" :classes="ds.classes" annotate :width="960" :height="540" />
+          <div class="overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-900">
+            <img v-if="zoomReal" :src="zoomReal.url" :alt="zoomReal.label" class="mx-auto max-h-[60vh] w-auto object-contain" />
+            <SynthImage v-else :seed="seedOf(zoom)" :task="ds.task" :classes="ds.classes" :sample-images="ds.sampleImages" annotate :width="960" :height="540" />
           </div>
           <div>
             <p class="mb-1 text-xs font-medium text-gray-500">labels.csv 中对应的 {{ zoomRows.length }} 行</p>
@@ -279,6 +350,12 @@ function download(p: SplitName) {
             </div>
           </div>
         </div>
+      </Modal>
+      <Modal v-model:open="deleteOpen" :title="`删除数据集 · ${ds.id}`" :description="`确认删除数据集「${ds.id}」？${benches.length ? `同时会移除关联的 ${benches.length} 个评测基准及对应评测记录，` : ''}此操作无法撤销。`">
+        <template #footer>
+          <button type="button" class="btn-default" @click="deleteOpen = false">取消</button>
+          <button type="button" class="btn-danger" :disabled="deleting" @click="doDelete">{{ deleting ? '删除中…' : '确认删除' }}</button>
+        </template>
       </Modal>
       <EditDatasetModal v-model:open="editOpen" :ds="ds" @saved="ds = $event" />
     </template>

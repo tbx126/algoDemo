@@ -1,10 +1,11 @@
 {
   "name": "algohub-frontend",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "backend": "uv --directory backend run uvicorn server:app --host 127.0.0.1 --port 8000",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc -b"

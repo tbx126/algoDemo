@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Box, Database, Search, Trophy } from 'lucide-vue-next'
 import { quickSearch } from '@/api'
+import { algoFullLabel } from '@/utils/display'
 
 const router = useRouter()
 const q = ref('')
@@ -41,7 +42,7 @@ function submit() {
       <template v-if="res.algorithms.length">
         <p class="px-2.5 pt-1.5 pb-1 text-xs font-medium text-gray-400">算法</p>
         <button v-for="a in res.algorithms" :key="a.id" class="flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800" @click="go(`/algorithms/${a.id}`)">
-          <Box class="size-4 text-gray-400" /> <span class="mono truncate">{{ a.id }}</span>
+          <Box class="size-4 text-gray-400" /> <span class="truncate">{{ algoFullLabel(a.id) }}</span>
         </button>
       </template>
       <template v-if="res.datasets.length">

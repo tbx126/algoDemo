@@ -2,6 +2,7 @@
 import type { EvalRun } from '@/types'
 import { benchmarks } from '@/mock/benchmarks'
 import { fmtDuration, fmtMetric, timeAgo } from '@/utils/format'
+import { algoFullLabel } from '@/utils/display'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import StateView from '@/components/ui/StateView.vue'
 
@@ -35,7 +36,7 @@ function primary(r: EvalRun) {
         <tbody>
           <tr v-for="r in runs" :key="r.id" class="hover:bg-gray-50 dark:hover:bg-gray-900">
             <td><RouterLink :to="`/evals/${r.id}`" class="mono text-brand-600 hover:underline dark:text-brand-500">{{ r.id }}</RouterLink></td>
-            <td v-if="!hideAlgo"><RouterLink :to="`/algorithms/${r.algorithmId}`" class="mono hover:underline">{{ r.algorithmId }}</RouterLink></td>
+            <td v-if="!hideAlgo"><RouterLink :to="`/algorithms/${r.algorithmId}`" class="hover:underline">{{ algoFullLabel(r.algorithmId) }}</RouterLink></td>
             <td class="mono">{{ r.algoVersion }}</td>
             <td v-if="!hideBench" class="whitespace-nowrap"><RouterLink :to="`/benchmarks/${r.benchmarkId}`" class="hover:underline">{{ bench(r.benchmarkId)?.displayName }}</RouterLink></td>
             <td>

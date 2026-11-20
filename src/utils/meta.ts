@@ -1,15 +1,25 @@
-import type { AlgoVersionStatus, EvalStatus, Role, TaskType } from '@/types'
+import type { AlgoVersionStatus, BusinessCategory, EvalStatus, EvaluatorStatus, Role, TaskType } from '@/types'
 
-export const TASKS: Record<TaskType, { label: string; group: 'CV' | '传统算法' | '其他'; color: string }> = {
-  'image-classification': { label: '图像分类', group: 'CV', color: 'text-sky-600 dark:text-sky-400' },
-  'object-detection': { label: '目标检测', group: 'CV', color: 'text-amber-600 dark:text-amber-400' },
-  'semantic-segmentation': { label: '语义分割', group: 'CV', color: 'text-emerald-600 dark:text-emerald-400' },
-  'instance-segmentation': { label: '实例分割', group: 'CV', color: 'text-teal-600 dark:text-teal-400' },
-  'keypoint-detection': { label: '关键点检测', group: 'CV', color: 'text-rose-600 dark:text-rose-400' },
-  ocr: { label: 'OCR 文字识别', group: 'CV', color: 'text-violet-600 dark:text-violet-400' },
-  'signal-processing': { label: '信号处理', group: '传统算法', color: 'text-orange-600 dark:text-orange-400' },
-  optimization: { label: '优化求解', group: '传统算法', color: 'text-lime-600 dark:text-lime-400' },
+export const TASKS: Record<TaskType, { label: string; group: '视觉与识别' | '预测与优化' | '其他'; color: string }> = {
+  'image-classification': { label: '图像识别', group: '视觉与识别', color: 'text-sky-600 dark:text-sky-400' },
+  'object-detection': { label: '目标检测', group: '视觉与识别', color: 'text-amber-600 dark:text-amber-400' },
+  'semantic-segmentation': { label: '语义分割', group: '视觉与识别', color: 'text-emerald-600 dark:text-emerald-400' },
+  'instance-segmentation': { label: '实例分割', group: '视觉与识别', color: 'text-teal-600 dark:text-teal-400' },
+  'keypoint-detection': { label: '关键点检测', group: '视觉与识别', color: 'text-rose-600 dark:text-rose-400' },
+  ocr: { label: 'OCR 文字识别', group: '视觉与识别', color: 'text-violet-600 dark:text-violet-400' },
+  'power-forecast': { label: '功率预测', group: '预测与优化', color: 'text-indigo-600 dark:text-indigo-400' },
+  'signal-processing': { label: '信号处理', group: '预测与优化', color: 'text-orange-600 dark:text-orange-400' },
+  optimization: { label: '优化求解', group: '预测与优化', color: 'text-lime-600 dark:text-lime-400' },
   custom: { label: '自定义任务', group: '其他', color: 'text-slate-600 dark:text-slate-400' },
+}
+
+export const BUSINESS_CATEGORIES: Record<BusinessCategory, { label: string; color: string; chip: string }> = {
+  security: { label: '安防', color: 'text-blue-600 dark:text-blue-400', chip: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/50 dark:text-blue-300' },
+  inspection: { label: '巡检', color: 'text-emerald-600 dark:text-emerald-400', chip: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300' },
+  'fire-safety': { label: '消防', color: 'text-rose-600 dark:text-rose-400', chip: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-300' },
+  'env-control': { label: '环控', color: 'text-cyan-600 dark:text-cyan-400', chip: 'border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-900 dark:bg-cyan-950/50 dark:text-cyan-300' },
+  production: { label: '生产', color: 'text-amber-600 dark:text-amber-400', chip: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-300' },
+  other: { label: '其他', color: 'text-slate-600 dark:text-slate-400', chip: 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300' },
 }
 
 /** 内置评测器 & 原生渲染支持的任务 */
@@ -17,6 +27,7 @@ export const BUILTIN_TASKS: TaskType[] = ['image-classification', 'object-detect
 
 export const ROLES: Record<Role, { label: string; desc: string; chip: string }> = {
   admin: { label: '管理员', desc: '全部权限：数据集、评测基准、账号与审核，可查看与下载测试集', chip: 'border-indigo-200 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-600/20 dark:text-brand-100' },
+  regional: { label: '区域侧', desc: '查看所有已审核算法、数据集（仅训练集）、评测基准与评测任务；无后台管理权限', chip: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-300' },
   demo: { label: '演示账号', desc: '查看全部算法与排行榜，可在线推理、下载训练集；不能提交或评测', chip: 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-900/30 dark:text-sky-300' },
   vendor: { label: '厂商账号', desc: '仅见自己的算法；提交需审核，可在测试集上评测但看不到测试集内容', chip: 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-900/30 dark:text-violet-300' },
 }
@@ -36,4 +47,10 @@ export const EVAL_STATUS: Record<EvalStatus, { label: string; cls: string }> = {
   succeeded: { label: '成功', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' },
   failed: { label: '失败', cls: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300' },
   canceled: { label: '已取消', cls: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400' },
+}
+
+export const EVALUATOR_STATUS: Record<EvaluatorStatus, { label: string; cls: string }> = {
+  ready: { label: '已就绪', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' },
+  uninitialized: { label: '待初始化', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300' },
+  disabled: { label: '已停用', cls: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400' },
 }

@@ -19,7 +19,7 @@ function submit() {
     <div class="relative hidden flex-1 overflow-hidden bg-gray-950 lg:block">
       <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_30%_20%,rgba(99,102,241,.45),transparent_50%),radial-gradient(ellipse_at_80%_80%,rgba(6,182,212,.3),transparent_45%)]" />
       <div class="relative flex h-full flex-col justify-between p-12 text-white">
-        <div class="flex items-center gap-2 text-lg font-semibold"><img src="/logo.svg" alt="" class="size-8" />AlgoHub</div>
+        <div class="flex items-center gap-2 text-lg font-semibold"><img src="/logo.png" alt="" class="size-8 rounded-md bg-white/95 object-contain p-0.5" />总部算法平台</div>
         <div>
           <p class="text-3xl leading-snug font-bold">同一份数据，同一套评测，<br />可比较、可复现的结果。</p>
           <p class="mt-4 max-w-md text-sm text-gray-300">数据集与算法版本化管理 · 隔离容器评测 · 测试集标注不出平台 · 在线单图推理</p>
@@ -29,7 +29,7 @@ function submit() {
     </div>
     <div class="flex flex-1 items-center justify-center px-4 py-12">
       <form class="w-full max-w-sm space-y-5" @submit.prevent="submit">
-        <div class="flex items-center gap-2 lg:hidden"><img src="/logo.svg" alt="" class="size-8" /><span class="text-lg font-semibold">AlgoHub</span></div>
+        <div class="flex items-center gap-2 lg:hidden"><img src="/logo.png" alt="" class="size-8 rounded-md object-contain" /><span class="text-lg font-semibold">总部算法平台</span></div>
         <div>
           <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">登录</h1>
           <p class="mt-1 text-sm text-gray-500">使用管理员为你开通的账号</p>

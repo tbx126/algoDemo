@@ -2,7 +2,7 @@ import { computed, reactive, watch } from 'vue'
 import type { Role } from '@/types'
 import { demoIdentity, users } from '@/mock/orgs'
 
-const ROLE_KEYS: Role[] = ['admin', 'demo', 'vendor']
+const ROLE_KEYS: Role[] = ['admin', 'regional', 'demo', 'vendor']
 
 function loadRole(): Role {
   try {
@@ -43,11 +43,16 @@ watch(
 const user = computed(() => users.find((u) => u.id === demoIdentity[state.role])!)
 
 /**
- * 算法可见性：管理员、演示账号可见全部；厂商只能看到自己组织的算法。
+ * 算法可见性：
+ * - 管理员、演示账号：可见全部；
+ * - 区域侧：可见所有已审核算法（至少有一个 ready/building 版本）；
+ * - 厂商：可见自己组织的算法及 Admin 平台基线算法。
  * 数据集对所有人可见（训练集可下载，测试集内容仅管理员可见）。
  */
-function canSeeAlgo(a: { org: string }): boolean {
-  return state.role !== 'vendor' || a.org === user.value.orgId
+function canSeeAlgo(a: { org: string; versions?: { status: string }[] }): boolean {
+  if (state.role === 'vendor') return a.org === user.value.orgId || a.org === 'Admin'
+  if (state.role === 'regional') return !a.versions || a.versions.some((v) => v.status === 'ready' || v.status === 'building')
+  return true
 }
 
 const can = computed(() => {

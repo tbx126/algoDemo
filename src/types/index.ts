@@ -7,12 +7,16 @@ export type TaskType =
   | 'instance-segmentation'
   | 'keypoint-detection'
   | 'ocr'
+  | 'power-forecast'
   | 'signal-processing'
   | 'optimization'
   | 'custom'
 
-/** 三类账号：管理员（平台运营）、演示账号（只读展示）、厂商账号（算法供应商） */
-export type Role = 'admin' | 'demo' | 'vendor'
+/** 算法业务分类 */
+export type BusinessCategory = 'security' | 'inspection' | 'fire-safety' | 'env-control' | 'production' | 'other'
+
+/** 四类账号：管理员（平台运营）、区域侧（查看已审核算法/训练集/评测）、演示账号（只读展示）、厂商账号（算法供应商） */
+export type Role = 'admin' | 'regional' | 'demo' | 'vendor'
 
 
 export type Framework = 'PyTorch' | 'ONNX' | 'TensorRT' | 'OpenCV' | 'NumPy' | 'Paddle'
@@ -84,7 +88,9 @@ export interface Algorithm {
   id: string // org/name
   org: string
   name: string
+  displayName?: string // 算法中文名称
   task: TaskType
+  business: BusinessCategory
   framework: Framework
   tags: string[]
   summary: string
@@ -98,6 +104,7 @@ export interface Algorithm {
   files: AlgoFile[]
   algoYaml: string
   labels?: string[] // 推理组件用的类别名
+  sampleImages?: string[] // 在线推理示例图片（真实图片路径）
   declaration?: AlgoDeclaration // 按《算法标准 1.0》提交的申报信息
 }
 
@@ -234,6 +241,13 @@ export interface Dataset {
   downloads: number
   updatedAt: string
   previewSeed: number
+  /** 可选：按类别提供的真实示例图片路径，用于数据集预览 */
+  sampleImages?: Record<string, string[]>
+  /** 可选：由真实后端提供的真实预览样本（含真实文件名、标签与图片 URL） */
+  realPreview?: {
+    train: { file_name: string; label: string; url: string }[]
+    test: { file_name: string; label: string; url: string }[]
+  }
 }
 
 export interface MetricDef {
@@ -242,6 +256,34 @@ export interface MetricDef {
   higherIsBetter: boolean
   unit?: string
   primary?: boolean
+}
+
+export interface EvaluatorParamDef {
+  key: string
+  label: string
+  type: 'number' | 'boolean' | 'string' | 'select'
+  value: string | number | boolean
+  options?: string[]
+  desc?: string
+}
+
+export type EvaluatorStatus = 'ready' | 'uninitialized' | 'disabled'
+
+export interface Evaluator {
+  id: string
+  name: string
+  version: string
+  kind: 'builtin' | 'custom'
+  task: TaskType
+  status: EvaluatorStatus
+  description: string
+  entrypoint: string
+  runtime: string
+  supportedMetrics: MetricDef[]
+  config: EvaluatorParamDef[]
+  script: string
+  updatedAt: string
+  updatedBy: string
 }
 
 export interface Benchmark {
@@ -284,6 +326,8 @@ export interface EvalRun {
   peakGpuMemGB?: number
   latencyMs?: number // 单图平均推理耗时
   isLatestValid: boolean // 同一 算法版本×Benchmark 只有最新有效结果上榜
+  perClass?: { label: string; value: number }[]
+  errorSamples?: { fileName: string; url: string; groundTruth: string; predicted: string; confidence: number }[]
   logs: string[]
   error?: string
 }
@@ -324,6 +368,8 @@ export interface Paginated<T> {
 export interface ListQuery {
   q?: string
   task?: TaskType | ''
+  business?: BusinessCategory | ''
+  tags?: string[]
   framework?: string
   org?: string
   sort?: 'trending' | 'updated' | 'likes' | 'evals'

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { Braces, Cpu, ImageUp, LoaderCircle, Lock, Play, RotateCcw, Zap } from 'lucide-vue-next'
-import type { Algorithm, InferenceResult } from '@/types'
+import type { Algorithm, InferenceResult, TaskType } from '@/types'
 import { infer } from '@/api'
 import { useSession } from '@/stores/session'
+import { TASKS } from '@/utils/meta'
 import { CLASS_COLORS, sampleImageDataUrl } from '@/utils/synth'
 import { hashStr } from '@/utils/format'
 
@@ -12,14 +13,19 @@ const { can } = useSession()
 
 const readyVersions = computed(() => props.algo.versions.filter((v) => v.status === 'ready'))
 const version = ref(readyVersions.value[0]?.version ?? '')
-const isImageTask = computed(() => !['signal-processing', 'optimization', 'custom'].includes(props.algo.task))
+const isRandomAlgo = computed(() => props.algo.id === 'Admin/random')
+const randomTask = ref<TaskType>('image-classification')
+const activeTask = computed<TaskType>(() => (isRandomAlgo.value ? randomTask.value : props.algo.task))
+const isImageTask = computed(() => !['signal-processing', 'power-forecast', 'optimization', 'custom'].includes(activeTask.value))
 
 const samples = ref<string[]>([])
 onMounted(() => {
-  if (isImageTask.value) samples.value = [0, 1, 2].map((i) => sampleImageDataUrl(hashStr(props.algo.id) + i * 97, props.algo.task, props.algo.labels?.length ?? 3))
+  if (!isImageTask.value && !isRandomAlgo.value) return
+  if (props.algo.sampleImages?.length) samples.value = props.algo.sampleImages
+  else samples.value = [0, 1, 2].map((i) => sampleImageDataUrl(hashStr(props.algo.id) + i * 97, activeTask.value, props.algo.labels?.length ?? 3))
 })
 
-const input = ref<{ dataUrl?: string; fileName: string; size: number } | null>(null)
+const input = ref<{ dataUrl?: string; file?: File; fileName: string; size: number } | null>(null)
 const result = ref<InferenceResult | null>(null)
 const running = ref(false)
 const phase = ref('')
@@ -31,7 +37,9 @@ const canvas = ref<HTMLCanvasElement>()
 const imgEl = new Image()
 
 function pickSample(i: number) {
-  input.value = { dataUrl: samples.value[i], fileName: `sample_${i + 1}.jpg`, size: samples.value[i].length }
+  const s = samples.value[i]
+  const name = s.startsWith('/') ? s.split('/').pop()! : `sample_${i + 1}.jpg`
+  input.value = { dataUrl: s, fileName: name, size: s.length }
   result.value = null
 }
 
@@ -45,12 +53,12 @@ function onFile(f?: File | null) {
   if (isImageTask.value) {
     const r = new FileReader()
     r.onload = () => {
-      input.value = { dataUrl: r.result as string, fileName: f.name, size: f.size }
+      input.value = { dataUrl: r.result as string, file: f, fileName: f.name, size: f.size }
       result.value = null
     }
     r.readAsDataURL(f)
   } else {
-    input.value = { fileName: f.name, size: f.size }
+    input.value = { file: f, fileName: f.name, size: f.size }
     result.value = null
   }
 }
@@ -68,7 +76,7 @@ async function run() {
   phase.value = warm ? '容器已预热，推理中…' : '冷启动容器（加载权重）…'
   const t = setTimeout(() => (phase.value = '推理中…'), 900)
   try {
-    result.value = await infer(props.algo.id, version.value, input.value)
+    result.value = await infer(props.algo.id, version.value, { ...input.value, task: isRandomAlgo.value ? randomTask.value : undefined })
   } finally {
     clearTimeout(t)
     running.value = false
@@ -152,6 +160,12 @@ const accept = computed(() => (isImageTask.value ? 'image/*' : props.algo.task =
     <div v-else-if="!readyVersions.length" class="px-4 py-10 text-center text-sm text-gray-500">暂无可用版本（构建或审核未完成），无法推理</div>
 
     <div v-else class="space-y-3 p-4">
+      <div v-if="isRandomAlgo" class="flex items-center gap-2 text-xs">
+        <label for="rand-task" class="shrink-0 text-gray-500">输出任务格式</label>
+        <select id="rand-task" v-model="randomTask" class="input py-1 text-xs" @change="result = null">
+          <option v-for="(v, k) in TASKS" :key="k" :value="k">{{ v.label }}</option>
+        </select>
+      </div>
       <!-- 输入区 -->
       <div
         v-if="!input"

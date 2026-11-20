@@ -7,6 +7,7 @@ import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
 import { TASKS } from '@/utils/meta'
+import { algoFullLabel } from '@/utils/display'
 import StateView from '@/components/ui/StateView.vue'
 import TaskBadge from '@/components/ui/TaskBadge.vue'
 
@@ -28,18 +29,19 @@ const form = reactive({
 })
 const submitting = ref(false)
 
+const isUniversal = (id?: string) => id === 'Admin/random'
 const algo = computed(() => algos.value?.items.find((a) => a.id === form.algo))
 const bench = computed(() => benches.value?.find((b) => b.id === form.bench))
 const versions = computed(() => algo.value?.versions ?? [])
 const ver = computed(() => versions.value.find((v) => v.version === form.version))
-const benchOptions = computed(() => (benches.value ?? []).filter((b) => !algo.value || b.task === algo.value.task))
-const algoOptions = computed(() => (algos.value?.items ?? []).filter((a) => !bench.value || a.task === bench.value.task))
+const benchOptions = computed(() => (benches.value ?? []).filter((b) => !algo.value || isUniversal(algo.value.id) || b.task === algo.value.task))
+const algoOptions = computed(() => (algos.value?.items ?? []).filter((a) => !bench.value || isUniversal(a.id) || a.task === bench.value.task))
 
 watch(
   () => form.algo,
   () => {
     if (!versions.value.some((v) => v.version === form.version)) form.version = versions.value.find((v) => v.status === 'ready')?.version ?? ''
-    if (bench.value && algo.value && bench.value.task !== algo.value.task) form.bench = ''
+    if (bench.value && algo.value && !isUniversal(algo.value.id) && bench.value.task !== algo.value.task) form.bench = ''
   },
 )
 watch(algos, () => {
@@ -49,7 +51,10 @@ watch(algos, () => {
 const checks = computed(() => {
   const out: { ok: boolean; text: string }[] = []
   if (ver.value) out.push({ ok: ver.value.status === 'ready', text: ver.value.status === 'ready' ? `版本 ${ver.value.version} 已构建，镜像可用` : `版本 ${ver.value.version} 不可用（${ver.value.status}）` })
-  if (algo.value && bench.value) out.push({ ok: algo.value.task === bench.value.task, text: algo.value.task === bench.value.task ? '任务类型匹配' : '任务类型不匹配' })
+  if (algo.value && bench.value) {
+    const ok = isUniversal(algo.value.id) || algo.value.task === bench.value.task
+    out.push({ ok, text: isUniversal(algo.value.id) ? '通用随机基线，兼容任意任务类型的评测基准' : ok ? '任务类型匹配' : '任务类型不匹配' })
+  }
   if (ver.value && q.value) out.push({ ok: ver.value.gpuMem <= q.value.gpuMemTotal, text: `声明显存 ${ver.value.gpuMem} GB ≤ GPU 总显存 ${q.value.gpuMemTotal} GB` })
   return out
 })
@@ -83,7 +88,7 @@ async function submit() {
             <label class="label" for="f-algo">算法</label>
             <select id="f-algo" v-model="form.algo" class="input" required>
               <option value="" disabled>选择算法…</option>
-              <option v-for="a in algoOptions" :key="a.id" :value="a.id">{{ a.id }}（{{ TASKS[a.task].label }}）</option>
+              <option v-for="a in algoOptions" :key="a.id" :value="a.id">{{ algoFullLabel(a) }}（{{ TASKS[a.task].label }}）</option>
             </select>
           </div>
           <div>

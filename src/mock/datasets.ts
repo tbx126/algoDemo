@@ -17,11 +17,35 @@ interface Seed {
   likes: number
   downloads: number
   updatedAt: string
+  createdBy?: string
+  sampleImages?: Record<string, string[]>
   noTest?: boolean
 }
 
-// 数据集：入库材料未提供数据集，暂为空；管理员可在“上传数据集”中添加（放在 Admin 命名空间）
-const seeds: Seed[] = []
+const CAT_IMAGES = Array.from({ length: 9 }, (_, n) => `/datasets/cat-dog/cat_${String(n + 1).padStart(2, '0')}.jpg`)
+const DOG_IMAGES = Array.from({ length: 9 }, (_, n) => `/datasets/cat-dog/dog_${String(n + 1).padStart(2, '0')}.jpg`)
+
+// 管理员上传的数据集（统一放在 Admin 命名空间）
+const seeds: Seed[] = [
+  {
+    org: 'Admin',
+    name: 'cat-dog-dataset',
+    task: 'image-classification',
+    summary: '猫狗二分类标准图像数据集，包含图片与猫/狗类别标注，用于图像识别算法训练与评测。',
+    classes: ['猫', '狗'],
+    counts: [8000, 2000],
+    annPer: 1,
+    size: 1.6,
+    versions: 1,
+    tags: ['猫狗识别', '图像分类'],
+    conditions: [],
+    likes: 8,
+    downloads: 24,
+    updatedAt: '2026-11-18T15:00:00+08:00',
+    createdBy: 'admin',
+    sampleImages: { 猫: CAT_IMAGES, 狗: DOG_IMAGES },
+  },
+]
 
 const ADMINS = ['chen.wei', 'li.na', 'zhao.lei', 'wu.hao']
 
@@ -80,7 +104,7 @@ function part(s: Seed, name: SplitName, i: number, columns: string[]): DatasetPa
     return {
       version: `v${v}.0`,
       createdAt: new Date(new Date(s.updatedAt).getTime() - k * 86400000 * 47 - (name === 'test' ? 86400000 : 0)).toISOString(),
-      createdBy: ADMINS[(i + k + (name === 'test' ? 1 : 0)) % ADMINS.length],
+      createdBy: s.createdBy ?? ADMINS[(i + k + (name === 'test' ? 1 : 0)) % ADMINS.length],
       contentHash: 'sha256:' + fakeSha(`${s.name}-${name}-${v}`),
       sizeBytes: Math.round(s.size * 1024 ** 3 * (name === 'train' ? 1 : files / s.counts[0]) * shrink),
       note: k === 0 ? (name === 'test' ? '补充夜间与遮挡难例' : '修正部分错误标注，新增难例样本') : k === s.versions - 1 ? '首个版本' : name === 'test' ? '扩充测试样本' : '扩充训练集',
@@ -115,5 +139,6 @@ export const datasets: Dataset[] = seeds.map((s, i) => {
     downloads: s.downloads,
     updatedAt: s.updatedAt,
     previewSeed: 1000 + i * 37,
+    sampleImages: s.sampleImages,
   }
 })

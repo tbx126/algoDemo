@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Building2, ClipboardCheck, Pencil, RotateCcw, ShieldCheck, UserPlus, Users } from 'lucide-vue-next'
-import { ApiError, createUser, listOrgs, listReviewQueue, listUsers, resetPrototypeData, reviewVersion, setUserActive, updateUser } from '@/api'
+import { Building2, Check, ClipboardCheck, Pencil, Plus, RotateCcw, ShieldCheck, Tag, Trash2, UserPlus, Users, X } from 'lucide-vue-next'
+import { ApiError, createTag, createUser, deleteTag, listOrgs, listReviewQueue, listTags, listUsers, renameTag, resetPrototypeData, reviewVersion, setUserActive, updateUser } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
 import { ROLES, TASKS } from '@/utils/meta'
 import { fmtBytes, fmtDate, timeAgo } from '@/utils/format'
+import { algoFullLabel } from '@/utils/display'
 import type { Role, User } from '@/types'
 import StateView from '@/components/ui/StateView.vue'
 import OrgAvatar from '@/components/ui/OrgAvatar.vue'
@@ -22,6 +23,64 @@ const tab = computed(() => (route.params.tab as string) || 'users')
 const { data: users, reload: reloadUsers } = useAsync(() => listUsers())
 const { data: reviews, reload: reloadReviews } = useAsync(() => listReviewQueue())
 const { data: orgList } = useAsync(() => listOrgs())
+const { data: tagList, reload: reloadTags } = useAsync(() => listTags())
+
+// ---- 标签管理 ----
+const newTag = ref('')
+const editingTag = ref<string | null>(null)
+const editTagDraft = ref('')
+const tagBusy = ref(false)
+async function addTag() {
+  const v = newTag.value.trim()
+  if (!v || tagBusy.value) return
+  tagBusy.value = true
+  try {
+    await createTag(v)
+    newTag.value = ''
+    toast(`已添加标签「${v}」`)
+    reloadTags()
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : '添加失败', 'error')
+  } finally {
+    tagBusy.value = false
+  }
+}
+async function saveTagRename(oldName: string) {
+  const next = editTagDraft.value.trim()
+  if (!next) {
+    toast('标签名称不能为空', 'error')
+    return
+  }
+  if (next === oldName) {
+    editingTag.value = null
+    return
+  }
+  tagBusy.value = true
+  try {
+    await renameTag(oldName, next)
+    editingTag.value = null
+    toast(`已将「${oldName}」重命名为「${next}」`)
+    reloadTags()
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : '修改失败', 'error')
+  } finally {
+    tagBusy.value = false
+  }
+}
+async function removeTag(name: string) {
+  if (tagBusy.value) return
+  tagBusy.value = true
+  try {
+    await deleteTag(name)
+    toast(`已删除标签「${name}」`, 'info')
+    if (editingTag.value === name) editingTag.value = null
+    reloadTags()
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : '删除失败', 'error')
+  } finally {
+    tagBusy.value = false
+  }
+}
 
 // ---- 用户 ----
 const userQ = ref('')
@@ -103,6 +162,9 @@ async function review(algoId: string, version: string, approve: boolean) {
           <ClipboardCheck class="size-4" />审核队列<span v-if="reviews?.length" class="rounded-full bg-amber-500 px-1.5 text-[10px] text-white">{{ reviews.length }}</span>
         </button>
         <button class="tab" :class="{ 'tab-active': tab === 'vendors' }" @click="router.replace('/admin/vendors')"><Building2 class="size-4" />厂商</button>
+        <button class="tab" :class="{ 'tab-active': tab === 'tags' }" @click="router.replace('/admin/tags')">
+          <Tag class="size-4" />标签<span v-if="tagList?.length" class="chip px-1 py-0 text-[10px]">{{ tagList.length }}</span>
+        </button>
       </div>
 
       <!-- 用户 -->
@@ -125,7 +187,12 @@ async function review(algoId: string, version: string, approve: boolean) {
                   <td><span v-if="u.orgId" class="flex items-center gap-1.5"><OrgAvatar :org="u.orgId" :size="16" />{{ orgName(u.orgId) }}</span><span v-else class="text-xs text-gray-400">不属于任何组织</span></td>
                   <td class="whitespace-nowrap text-gray-500">{{ u.lastLoginAt ? timeAgo(u.lastLoginAt) : '从未登录' }}</td>
                   <td>{{ u.active ? '启用' : '已停用' }}</td>
-                  <td class="text-right whitespace-nowrap"><button class="btn-ghost px-2 py-1 text-xs" @click="openEdit(u)"><Pencil class="size-3.5" />编辑</button><button class="btn-ghost px-2 py-1 text-xs" @click="toggleActive(u.id, !u.active)">{{ u.active ? '停用' : '启用' }}</button></td>
+                  <td class="text-right whitespace-nowrap">
+                    <div class="inline-flex items-center justify-end gap-1">
+                      <button class="btn-ghost px-2 py-1 text-xs" @click="openEdit(u)"><Pencil class="size-3.5" />编辑</button>
+                      <button class="btn-ghost px-2 py-1 text-xs" @click="toggleActive(u.id, !u.active)">{{ u.active ? '停用' : '启用' }}</button>
+                    </div>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -140,7 +207,7 @@ async function review(algoId: string, version: string, approve: boolean) {
             <div v-for="r in reviews" :key="r.algorithm.id + r.version.version" class="card p-5">
               <div class="flex flex-wrap items-center gap-2">
                 <OrgAvatar :org="r.algorithm.org" :size="20" />
-                <RouterLink :to="`/algorithms/${r.algorithm.id}?tab=files`" class="mono font-medium hover:text-brand-600">{{ r.algorithm.id }}</RouterLink>
+                <RouterLink :to="`/algorithms/${r.algorithm.id}?tab=files`" class="font-medium hover:text-brand-600">{{ algoFullLabel(r.algorithm.id) }}</RouterLink>
                 <span class="mono text-gray-500">{{ r.version.version }}</span>
                 <span class="chip">{{ TASKS[r.algorithm.task].label }}</span>
                 <span class="chip">{{ r.algorithm.framework }}</span>
@@ -169,7 +236,7 @@ async function review(algoId: string, version: string, approve: boolean) {
       </div>
 
       <!-- 厂商 -->
-      <div v-else>
+      <div v-else-if="tab === 'vendors'">
         <div class="mb-3 flex flex-wrap items-center gap-3">
           <p class="text-sm text-gray-500">厂商按《算法标准 1.0》第四部分完成入库申报后，才能为其开通厂商账号、提交算法。</p>
           <RouterLink to="/vendors/new" class="btn-primary ml-auto"><Building2 class="size-4" />新建厂商</RouterLink>
@@ -188,6 +255,52 @@ async function review(algoId: string, version: string, approve: boolean) {
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- 标签 -->
+      <div v-else>
+        <div class="mb-4 flex flex-wrap items-center gap-3">
+          <form class="flex flex-1 flex-wrap items-center gap-2 sm:max-w-md" @submit.prevent="addTag">
+            <input v-model="newTag" class="input flex-1" placeholder="输入新标签名称，回车添加" aria-label="新标签名称" />
+            <button type="submit" class="btn-primary shrink-0" :disabled="tagBusy || !newTag.trim()"><Plus class="size-4" />添加标签</button>
+          </form>
+          <p class="text-sm text-gray-500">共 {{ tagList?.length ?? 0 }} 个标签；修改标签名称会同步更新所有关联算法。</p>
+        </div>
+        <StateView :loading="!tagList" :empty="tagList && !tagList.length" empty-text="暂无标签">
+          <div class="card overflow-x-auto">
+            <table class="table-base">
+              <thead><tr><th>标签名称</th><th>关联算法数</th><th class="text-right">操作</th></tr></thead>
+              <tbody>
+                <tr v-for="t in tagList" :key="t.name">
+                  <td>
+                    <div v-if="editingTag === t.name" class="flex max-w-xs items-center gap-1.5">
+                      <input
+                        v-model="editTagDraft"
+                        class="input h-7 py-0 text-sm"
+                        aria-label="修改标签名称"
+                        autofocus
+                        @keydown.enter.prevent="saveTagRename(t.name)"
+                        @keydown.esc.prevent="editingTag = null"
+                      />
+                      <button type="button" class="btn-ghost px-1.5 py-1 text-emerald-600" :disabled="tagBusy" @click="saveTagRename(t.name)"><Check class="size-4" /></button>
+                      <button type="button" class="btn-ghost px-1.5 py-1 text-gray-400" @click="editingTag = null"><X class="size-4" /></button>
+                    </div>
+                    <RouterLink v-else :to="`/algorithms?tags=${encodeURIComponent(t.name)}`" class="inline-flex items-center gap-1.5 font-medium hover:text-brand-600">
+                      <Tag class="size-3.5 text-gray-400" />{{ t.name }}
+                    </RouterLink>
+                  </td>
+                  <td><span class="chip">{{ t.count }} 个算法</span></td>
+                  <td class="text-right whitespace-nowrap">
+                    <div class="inline-flex items-center justify-end gap-1">
+                      <button type="button" class="btn-ghost px-2 py-1 text-xs" @click="editingTag = t.name; editTagDraft = t.name"><Pencil class="size-3.5" />重命名</button>
+                      <button type="button" class="btn-ghost px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40" :disabled="tagBusy" @click="removeTag(t.name)"><Trash2 class="size-3.5" />删除</button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </StateView>
       </div>
 
       <Modal v-model:open="editOpen" :title="`编辑账号 @${editing?.username ?? ''}`">

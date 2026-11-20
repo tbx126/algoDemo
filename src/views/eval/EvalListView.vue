@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { Cpu, FlaskConical, Flame, Plus, Snowflake } from 'lucide-vue-next'
 import { getQueueStatus, listEvals } from '@/api'
+import { algoFullLabel } from '@/utils/display'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import StateView from '@/components/ui/StateView.vue'
@@ -59,7 +60,7 @@ const memPct = computed(() => (q.value ? (q.value.gpuMemUsed / q.value.gpuMemTot
         <div class="space-y-1">
           <div v-for="w in q.warmContainers" :key="w.algorithmId" class="flex items-center gap-2 text-xs">
             <Flame class="size-3.5 text-orange-500" />
-            <RouterLink :to="`/algorithms/${w.algorithmId}`" class="mono truncate hover:underline">{{ w.algorithmId }}</RouterLink>
+            <RouterLink :to="`/algorithms/${w.algorithmId}`" class="truncate hover:underline">{{ algoFullLabel(w.algorithmId) }}</RouterLink>
             <span class="ml-auto shrink-0 text-gray-500">{{ w.memGB }} GB · 空闲 {{ Math.floor(w.idleSec / 60) }}m{{ w.idleSec % 60 }}s</span>
           </div>
           <p v-if="!q.warmContainers.length" class="flex items-center gap-1 text-xs text-gray-400"><Snowflake class="size-3.5" />无预热容器</p>

@@ -11,7 +11,7 @@ withDefaults(defineProps<{ user: Pick<User, 'displayName' | 'role' | 'orgId'>; s
   <span
     v-else
     class="inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white"
-    :class="user.role === 'admin' ? 'bg-gray-900 dark:bg-gray-600' : 'bg-sky-600'"
+    :class="user.role === 'admin' ? 'bg-gray-900 dark:bg-gray-600' : user.role === 'regional' ? 'bg-emerald-600' : 'bg-sky-600'"
     :style="{ width: size + 'px', height: size + 'px', fontSize: size * 0.46 + 'px' }"
     :title="user.displayName"
     >{{ user.displayName.slice(0, 1) }}</span
