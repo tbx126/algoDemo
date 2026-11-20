@@ -64,7 +64,7 @@ async function run() {
   if (!input.value || !version.value) return
   running.value = true
   result.value = null
-  const warm = ['vision-lab/yolo-lite-s', 'vision-lab/segformer-b2'].includes(props.algo.id)
+  const warm = false
   phase.value = warm ? '容器已预热，推理中…' : '冷启动容器（加载权重）…'
   const t = setTimeout(() => (phase.value = '推理中…'), 900)
   try {

@@ -181,7 +181,7 @@ const totalSize = computed(() => algo.value?.files.reduce((s, f) => s + f.size, 
                   <component :is="fileIcon(f.kind)" class="size-4 text-gray-400" />
                   <span class="mono">{{ f.path }}</span>
                   <span v-if="f.kind === 'weights'" class="chip text-[10px]">存储层 · 不入镜像</span>
-                  <span class="ml-auto text-xs text-gray-500">{{ fmtBytes(f.size) }}</span>
+                  <span class="ml-auto text-xs text-gray-500">{{ f.size ? fmtBytes(f.size) : '—' }}</span>
                 </div>
               </div>
             </div>

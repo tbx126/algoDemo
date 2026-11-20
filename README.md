@@ -2,6 +2,17 @@
 
 用于统一收集、管理、测试、评估算法与数据集的平台前端原型。交互模式参考 Hugging Face（卡片列表 + 左侧筛选、详情页 Tab、右侧推理组件、README 卡片），所有数据均为本地 mock，不依赖后端。
 
+## 当前数据
+
+演示数据已删除。平台内的数据来自《六项巡检算法入库材料》（浙江锋云深蓝科技有限公司，2026-11-18）：
+
+- 厂商：锋云深蓝（vendor.id `FengyunShenlan`），厂商账号 张蕾蕾
+- 算法 6 项（均为 v0.1、待审核）：红色LED数显识别 `LEDmeter`、避雷器电流表与放电计数识别 `lightningmetermechnicalcount`、柱状压板状态识别 `terminalblock`、GIS汇控状态灯亮灭识别 `LEDlight`、旋钮档位状态识别 `openandcloseknob`、主变油位识别 `outsideliquid`
+- 数据集、评测基准、评测记录：暂无（材料未提供测试集）
+- 账号：管理员 admin、演示账号 demo
+
+材料中未提供的信息（算法分类编码、封面、性能压测、镜像 tar 与权重文件、软著与专利）保持为空。
+
 ## 运行
 
 ```bash

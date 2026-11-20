@@ -5,7 +5,7 @@ import { getQueueStatus, listAlgorithms, listBenchmarks, listDatasets, listEvals
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { ROLES, TASKS } from '@/utils/meta'
-import { fmtBytes, fmtMetric, fmtNum, timeAgo } from '@/utils/format'
+import { fmtBytes, fmtDate, fmtMetric, fmtNum, timeAgo } from '@/utils/format'
 import { benchmarks as allBench } from '@/mock/benchmarks'
 import AlgoCard from '@/components/algo/AlgoCard.vue'
 import DatasetCard from '@/components/dataset/DatasetCard.vue'
@@ -38,7 +38,7 @@ const primaryOf = (bid: string) => allBench.find((b) => b.id === bid)?.metrics.f
     <!-- 标题行 -->
     <div class="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
       <h1 class="text-xl font-semibold text-gray-900 dark:text-white">平台总览</h1>
-      <p class="text-xs text-gray-500">按「{{ ROLES[state.role].label }}」可见范围统计 · 数据截至 2026-11-19 12:00</p>
+      <p class="text-xs text-gray-500">按「{{ ROLES[state.role].label }}」可见范围统计 · 数据截至 {{ fmtDate(new Date().toISOString()) }}</p>
     </div>
 
     <!-- KPI -->

@@ -24,8 +24,8 @@ const hover = ref<EvalStatus | null>(null)
         v-for="i in items.filter((x) => x.v)"
         :key="i.k"
         class="h-full transition-opacity first:rounded-l last:rounded-r"
-        :style="{ width: (i.v / total) * 100 + '%', background: i.color, opacity: hover && hover !== i.k ? 0.4 : 1 }"
-        :title="`${i.label}：${i.v}（${((i.v / total) * 100).toFixed(0)}%）`"
+        :style="{ width: (total ? (i.v / total) * 100 : 0) + '%', background: i.color, opacity: hover && hover !== i.k ? 0.4 : 1 }"
+        :title="`${i.label}：${i.v}（${total ? ((i.v / total) * 100).toFixed(0) : 0}%）`"
         @mouseenter="hover = i.k"
         @mouseleave="hover = null"
       />

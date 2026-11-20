@@ -17,8 +17,8 @@ export const NECESSITY: Record<Necessity, { label: string; cls: string }> = {
 }
 
 // ---------------- 厂商（第四部分 1–7） ----------------
-export const COMPANY_TYPES = ['有限责任公司', '股份有限公司', '国有企业', '外商投资企业', '个人独资企业', '合伙企业', '其他']
-export const COMPANY_STATUS = ['存续', '正常开业']
+export const COMPANY_TYPES = ['有限责任公司', '其他有限责任公司', '股份有限公司', '国有企业', '外商投资企业', '个人独资企业', '合伙企业', '其他']
+export const COMPANY_STATUS = ['存续', '开业', '正常开业']
 /** 统一社会信用代码：18 位，数字与大写字母（不含 I、O、S、V、Z） */
 export const CREDIT_CODE_RE = /^[0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQRTUWXY]{10}$/
 

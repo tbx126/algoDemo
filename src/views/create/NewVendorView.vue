@@ -90,7 +90,7 @@ const errors = computed(() => {
   if (byteLen(f.zh) > 50) e.zh = '超出 50 字节'
   if (f.company.creditCode && !CREDIT_CODE_RE.test(f.company.creditCode.toUpperCase())) e.creditCode = '应为 18 位统一社会信用代码（数字与大写字母）'
   if (f.contact.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.contact.email)) e.email = '邮箱格式不正确'
-  if (f.contact.website && !/^https?:\/\/\S+\.\S+/.test(f.contact.website)) e.website = '请以 http:// 或 https:// 开头'
+  if (f.contact.website && f.contact.website !== '/' && !/^https?:\/\/\S+\.\S+/.test(f.contact.website)) e.website = '请以 http:// 或 https:// 开头；没有官网填 /'
   if (f.liaison.phone && !/^(1\d{10}|0\d{2,3}-?\d{7,8})$/.test(f.liaison.phone)) e.liaisonPhone = '手机号或座机号格式不正确'
   if (f.contact.phone && !/^(0\d{2,3}-?\d{7,8}|400-?\d{3}-?\d{4}|1\d{10})$/.test(f.contact.phone)) e.phone = '电话格式不正确，如 0571-12345678'
   if (f.openAccount && !/^[a-z0-9._-]{3,32}$/.test(f.account.username)) e.username = '3–32 位小写字母、数字或 . _ -'

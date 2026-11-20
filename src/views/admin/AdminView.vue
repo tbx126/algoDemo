@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Building2, ClipboardCheck, Pencil, RotateCcw, ShieldCheck, UserPlus, Users } from 'lucide-vue-next'
 import { ApiError, createUser, listOrgs, listReviewQueue, listUsers, resetPrototypeData, reviewVersion, setUserActive, updateUser } from '@/api'
@@ -27,10 +27,12 @@ const { data: orgList } = useAsync(() => listOrgs())
 const userQ = ref('')
 const filteredUsers = computed(() => (users.value ?? []).filter((u) => !userQ.value || u.username.includes(userQ.value) || u.displayName.includes(userQ.value)))
 const createOpen = ref(false)
-const nu = reactive({ username: '', displayName: '', email: '', role: 'vendor' as Role, orgId: 'partner-xyz' })
+const nu = reactive({ username: '', displayName: '', email: '', role: 'vendor' as Role, orgId: '' })
 const vendors = computed(() => (orgList.value ?? []).filter((o) => o.kind === 'vendor'))
 const orgName = (id: string | null) => (id ? (orgList.value?.find((o) => o.id === id)?.displayName ?? id) : '')
 const created = ref<{ username: string; tempPassword: string } | null>(null)
+// 默认选中第一个厂商
+watch(vendors, (v) => !nu.orgId && v[0] && (nu.orgId = v[0].id), { immediate: true })
 async function doCreate() {
   try {
     const r = await createUser({ ...nu, orgId: nu.role === 'vendor' ? nu.orgId : null })
@@ -44,7 +46,7 @@ function closeCreate(v: boolean) {
   createOpen.value = v
   if (!v) {
     created.value = null
-    Object.assign(nu, { username: '', displayName: '', email: '', role: 'vendor', orgId: 'partner-xyz' })
+    Object.assign(nu, { username: '', displayName: '', email: '', role: 'vendor', orgId: vendors.value[0]?.id ?? '' })
   }
 }
 // ---- 编辑用户 ----

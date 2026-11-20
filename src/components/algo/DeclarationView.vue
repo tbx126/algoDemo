@@ -32,7 +32,7 @@ const supports = computed(() => [
           <div><dt class="text-xs text-gray-500">名称</dt><dd>{{ m.name.zh_CN }}<span v-if="m.name.en_US" class="text-gray-500"> · {{ m.name.en_US }}</span></dd></div>
           <div><dt class="text-xs text-gray-500">算法标识 / 版本</dt><dd class="mono">{{ m.id }} @ {{ t.version }}</dd></div>
           <div><dt class="text-xs text-gray-500">厂商</dt><dd>{{ d.packageInfo.vendor.zh_CN }} <code class="mono text-xs text-gray-400">{{ d.packageInfo.vendor.id }}</code></dd></div>
-          <div><dt class="text-xs text-gray-500">算法分类</dt><dd class="flex flex-wrap gap-1"><code v-for="c in m.classifications" :key="c" class="chip mono">{{ c }}</code></dd></div>
+          <div><dt class="text-xs text-gray-500">算法分类</dt><dd class="flex flex-wrap gap-1"><code v-for="c in m.classifications" :key="c" class="chip mono">{{ c }}</code><span v-if="!m.classifications.length" class="text-gray-400">待平台分配</span></dd></div>
           <div class="sm:col-span-2"><dt class="text-xs text-gray-500">适用场所</dt><dd class="flex flex-wrap gap-1"><span v-for="c in m.places" :key="c" class="chip">{{ c }}</span></dd></div>
           <div class="sm:col-span-2"><dt class="text-xs text-gray-500">使用要求</dt>
             <dd class="mt-1 grid gap-1 sm:grid-cols-2">
@@ -49,7 +49,7 @@ const supports = computed(() => [
           <div><dt class="text-xs text-gray-500">芯片</dt><dd>{{ t.environment.chip }}<span v-if="t.environment.basePackage" class="text-gray-500"> · {{ t.environment.basePackage.id }} {{ t.environment.basePackage.minorVersion }}–{{ t.environment.basePackage.majorVersion }}</span></dd></div>
           <div class="sm:col-span-2"><dt class="text-xs text-gray-500">占用资源</dt><dd>显存 {{ t.requirement.videoMemory }} MB · 内存 {{ t.requirement.memory }} MB · 磁盘 {{ t.requirement.disk }} MB · 智能内存 {{ t.requirement.AImemory }} MB · CPU {{ t.requirement.CPU }} 核</dd></div>
           <div class="sm:col-span-2"><dt class="text-xs text-gray-500">性能规格</dt>
-            <dd class="mt-1 flex flex-wrap gap-1"><span v-for="(a, i) in t.abilityInfos" :key="i" class="chip">{{ a.type }} · {{ a.specification }} · 算力 {{ a.ability }}% · {{ a.taskAbility }} 路</span></dd>
+            <dd class="mt-1 flex flex-wrap gap-1"><span v-for="(a, i) in t.abilityInfos" :key="i" class="chip">{{ a.type }} · {{ a.specification }} · 算力 {{ a.ability }}% · {{ a.taskAbility }} 路</span><span v-if="!t.abilityInfos.length" class="text-gray-400">未提供（尚未压测）</span></dd>
           </div>
           <div><dt class="text-xs text-gray-500">事件信息</dt><dd class="mono">{{ t.regulation.eventCode }}</dd></div>
           <div><dt class="text-xs text-gray-500">事件类型</dt><dd class="flex flex-wrap gap-1"><code v-for="e in p.eventTypes" :key="e" class="chip mono">{{ e }}</code></dd></div>

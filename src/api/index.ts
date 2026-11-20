@@ -35,7 +35,7 @@ import { fakeSha, hashStr, rng } from '@/utils/format'
 // ---------- 原型数据持久化 ----------
 // 写操作（新建厂商、上传数据集、编辑信息等）保存到浏览器 localStorage，刷新后仍在。
 // 恢复时就地替换 mock 数组的内容，直接引用 mock 的组件（如头像、基准名称）也能看到最新数据。
-const STORE_KEY = 'algohub-db-v1'
+const STORE_KEY = 'algohub-db-v2'
 const SOURCES = { algorithms: A0, datasets: D0, benchmarks: B0, evals: E0, orgs: O0, users: U0 }
 type DbKey = keyof typeof SOURCES
 try {
@@ -396,13 +396,10 @@ export async function getQueueStatus(): Promise<QueueStatus> {
   return {
     gpuName: 'RTX 4060 Laptop',
     gpuMemTotal: 8,
-    gpuMemUsed: 5.6,
+    gpuMemUsed: 0,
     running: db.evals.filter((r) => r.status === 'running').length,
     queued: db.evals.filter((r) => r.status === 'queued').length,
-    warmContainers: [
-      { algorithmId: 'vision-lab/yolo-lite-s', version: 'v3.1.0', memGB: 2.1, idleSec: 74 },
-      { algorithmId: 'vision-lab/segformer-b2', version: 'v1.0.0', memGB: 2.7, idleSec: 251 },
-    ],
+    warmContainers: [],
   }
 }
 
@@ -411,7 +408,7 @@ const PALETTE = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899
 
 export async function infer(algorithmId: string, version: string, input: { dataUrl?: string; fileName: string; size: number }): Promise<InferenceResult> {
   const a = db.algorithms.find((x) => x.id === algorithmId)!
-  const warm = ['vision-lab/yolo-lite-s', 'vision-lab/segformer-b2'].includes(algorithmId)
+  const warm = false // 原型：每次推理按冷启动处理
   const queuedMs = warm ? 0 : 1800 // 冷启动
   await delay(warm ? 650 : 1500)
   const seed = hashStr((input.dataUrl ?? input.fileName).slice(-4096) + input.size + algorithmId + version)
@@ -630,8 +627,16 @@ export async function reviewVersion(algoId: string, version: string, approve: bo
   if (!v) throw new ApiError(404, '版本不存在')
   v.status = approve ? 'building' : 'rejected'
   v.reviewNote = note
-  if (approve) v.buildLog.push(`[review] 审核通过：${note || '无备注'}`, '[build] 已进入构建队列')
-  else v.buildLog.push(`[review] 已驳回：${note}`)
+  if (approve) {
+    v.buildLog.push(`[review] 审核通过：${note || '无备注'}`, '[build] 已进入构建队列')
+    // 原型：模拟构建（导入镜像、加载权重、冒烟测试）几秒后完成
+    setTimeout(() => {
+      v.status = 'ready'
+      v.imageDigest = 'sha256:' + fakeSha(algoId + version + 'image')
+      v.weightsHash = v.weightsHash ?? 'sha256:' + fakeSha(algoId + version + 'weights')
+      v.buildLog.push(`[build] 导入镜像 ${v.baseImage}`, '[build] 校验权重与 algo.yaml …… OK', '[build] 冒烟测试 …… OK（原型模拟）', '[build] 完成，版本可用')
+    }, 3000)
+  } else v.buildLog.push(`[review] 已驳回：${note}`)
 }
 
 // ============ 全局搜索 ============
@@ -661,7 +666,7 @@ export interface Overview {
 export async function overview(): Promise<Overview> {
   await delay(120)
   const { canSeeAlgo } = useSession()
-  const now = new Date('2026-11-19T12:00:00+08:00').getTime()
+  const now = Date.now()
   const DAY = 86400000
   const algos = db.algorithms.filter(canSeeAlgo)
   const dss = db.datasets

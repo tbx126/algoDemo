@@ -1,170 +1,357 @@
-import type { AlgoVersion, AlgoVersionStatus, Algorithm, Framework, TaskType } from '@/types'
-import { datasets } from './datasets'
-import { fakeSha } from '@/utils/format'
+/**
+ * 入库算法：浙江锋云深蓝科技有限公司《六项巡检算法入库材料》（2026-11-18）
+ * 数据来源：01 厂商材料与算法基础信息申报表、02 算法说明与使用边界、03 算法接口对接说明、
+ *          04 模型说明与权重文件清单、05 部署运维与配置说明、06 六项算法原理说明。
+ * 材料中未提供的信息（如算法分类编码、封面、性能压测、权重与镜像文件）保持为空，不做虚构。
+ */
+import type { AlgoDeclaration, AlgoFile, AlgoVersion, Algorithm, TaskType } from '@/types'
 
-interface Seed {
-  org: string
-  name: string
-  task: TaskType
-  framework: Framework
-  license: string
-  summary: string
-  tags: string[]
-  likes: number
-  updatedAt: string
-  versions: [string, AlgoVersionStatus][] // 最新在前
-  gpuMem: number
-  weightsMB: number
-  datasetId?: string // 训练所用数据集，决定推理组件的类别
-  paper?: string
-}
+export const VENDOR_ID = 'FengyunShenlan'
+const VENDOR_ZH = '锋云深蓝'
+const SUBMITTED_AT = '2026-11-18T10:00:00+08:00'
+const SUBMITTER = 'zhang.ll'
+const IMAGE_TAG = 'inspection-six:0.1.0-cu126-20261118'
+const MiB = 1024 * 1024
 
-const S: Seed[] = [
-  { org: 'vision-lab', name: 'resnet50-defect', task: 'image-classification', framework: 'PyTorch', license: 'Apache-2.0', summary: 'ResNet-50 基线，ImageNet 预训练后在缺陷数据上微调。', tags: ['基线', '工业质检'], likes: 64, updatedAt: '2026-11-12T10:00:00+08:00', versions: [['v1.2.0', 'ready'], ['v1.1.0', 'ready'], ['v1.0.0', 'ready']], gpuMem: 1.6, weightsMB: 98, datasetId: 'Admin/factory-defect-cls', paper: 'https://arxiv.org/abs/1512.03385' },
-  { org: 'vision-lab', name: 'efficientnet-b3-defect', task: 'image-classification', framework: 'PyTorch', license: 'Apache-2.0', summary: 'EfficientNet-B3，精度与速度均衡，适合产线边缘部署。', tags: ['轻量', '工业质检'], likes: 41, updatedAt: '2026-11-08T10:00:00+08:00', versions: [['v2.0.0', 'ready'], ['v1.0.0', 'ready']], gpuMem: 1.4, weightsMB: 47, datasetId: 'Admin/factory-defect-cls', paper: 'https://arxiv.org/abs/1905.11946' },
-  { org: 'vision-lab', name: 'vit-small-defect', task: 'image-classification', framework: 'PyTorch', license: 'Apache-2.0', summary: 'ViT-S/16，自监督预训练，对细微缺陷更敏感。', tags: ['Transformer', '工业质检'], likes: 23, updatedAt: '2026-11-16T10:00:00+08:00', versions: [['v0.3.0', 'building'], ['v0.2.0', 'ready']], gpuMem: 2.2, weightsMB: 86, datasetId: 'Admin/factory-defect-cls', paper: 'https://arxiv.org/abs/2010.11929' },
-  { org: 'univ-cvlab', name: 'convnext-t-defect', task: 'image-classification', framework: 'PyTorch', license: 'MIT', summary: '启明视觉提交的 ConvNeXt-T 方案，加入纹理增强。', tags: ['厂商提交', '工业质检'], likes: 12, updatedAt: '2026-11-18T10:00:00+08:00', versions: [['v1.1.0', 'pending_review'], ['v1.0.0', 'ready']], gpuMem: 2.0, weightsMB: 110, datasetId: 'Admin/factory-defect-cls', paper: 'https://arxiv.org/abs/2201.03545' },
-  { org: 'vision-lab', name: 'mobilenetv3-defect', task: 'image-classification', framework: 'ONNX', license: 'Apache-2.0', summary: 'MobileNetV3-Large 导出 ONNX，CPU 也可实时推理。', tags: ['轻量', 'ONNX'], likes: 30, updatedAt: '2026-10-20T10:00:00+08:00', versions: [['v1.0.0', 'ready']], gpuMem: 0.6, weightsMB: 21, datasetId: 'Admin/factory-defect-cls' },
-  { org: 'vision-lab', name: 'yolo-lite-s', task: 'object-detection', framework: 'PyTorch', license: 'Apache-2.0', summary: '单阶段 Anchor-free 检测器 S 规格，团队通用检测基线。', tags: ['实时', '基线'], likes: 152, updatedAt: '2026-11-17T10:00:00+08:00', versions: [['v3.1.0', 'ready'], ['v3.0.0', 'ready'], ['v2.0.0', 'ready']], gpuMem: 2.4, weightsMB: 36, datasetId: 'Admin/street-objects-det' },
-  { org: 'vision-lab', name: 'rtdetr-r18', task: 'object-detection', framework: 'PyTorch', license: 'Apache-2.0', summary: '实时 DETR 类检测器，ResNet-18 骨干，无需 NMS。', tags: ['DETR', '实时'], likes: 98, updatedAt: '2026-11-14T10:00:00+08:00', versions: [['v1.0.0', 'ready']], gpuMem: 3.1, weightsMB: 80, datasetId: 'Admin/street-objects-det', paper: 'https://arxiv.org/abs/2304.08069' },
-  { org: 'vision-lab', name: 'faster-rcnn-r50-fpn', task: 'object-detection', framework: 'PyTorch', license: 'Apache-2.0', summary: '经典两阶段检测器，作为精度参照。', tags: ['两阶段', '基线'], likes: 77, updatedAt: '2026-09-02T10:00:00+08:00', versions: [['v1.0.0', 'ready']], gpuMem: 3.8, weightsMB: 167, datasetId: 'Admin/street-objects-det', paper: 'https://arxiv.org/abs/1506.01497' },
-  { org: 'smart-city', name: 'yolo-lite-n-traffic', task: 'object-detection', framework: 'TensorRT', license: 'Internal', summary: '面向路口摄像头的 N 规格检测器，TensorRT FP16 部署。', tags: ['交通', 'TensorRT', '边缘'], likes: 45, updatedAt: '2026-11-18T10:00:00+08:00', versions: [['v2.2.0', 'ready'], ['v2.1.0', 'ready']], gpuMem: 1.1, weightsMB: 12, datasetId: 'Admin/traffic-vehicles-det' },
-  { org: 'deepsee', name: 'tiled-small-det', task: 'object-detection', framework: 'PyTorch', license: 'Internal', summary: '深鉴智能提交：切片推理 + 融合策略，专攻远距离小目标。', tags: ['厂商提交', '小目标', '交通'], likes: 28, updatedAt: '2026-11-11T10:00:00+08:00', versions: [['v1.0.0', 'ready']], gpuMem: 4.6, weightsMB: 140, datasetId: 'Admin/traffic-vehicles-det' },
-  { org: 'partner-xyz', name: 'xy-det-tiny', task: 'object-detection', framework: 'ONNX', license: 'Proprietary', summary: '星衍科技提交的轻量检测模型（ONNX）。', tags: ['厂商提交', 'ONNX'], likes: 9, updatedAt: '2026-11-19T08:30:00+08:00', versions: [['v1.1.0', 'pending_review'], ['v1.0.0', 'ready']], gpuMem: 0.9, weightsMB: 18, datasetId: 'Admin/street-objects-det' },
-  { org: 'partner-xyz', name: 'xy-seg-lite', task: 'semantic-segmentation', framework: 'ONNX', license: 'Proprietary', summary: '星衍科技提交的轻量道路分割模型，面向车载边缘设备。', tags: ['厂商提交', '分割', '边缘'], likes: 6, updatedAt: '2026-11-15T10:00:00+08:00', versions: [['v1.0.0', 'ready']], gpuMem: 0.8, weightsMB: 14, datasetId: 'Admin/road-scene-seg' },
-  { org: 'vision-lab', name: 'unet-r34-road', task: 'semantic-segmentation', framework: 'PyTorch', license: 'MIT', summary: 'U-Net + ResNet-34 编码器的道路分割基线。', tags: ['基线', '分割'], likes: 58, updatedAt: '2026-10-25T10:00:00+08:00', versions: [['v1.1.0', 'ready'], ['v1.0.0', 'ready']], gpuMem: 2.0, weightsMB: 98, datasetId: 'Admin/road-scene-seg', paper: 'https://arxiv.org/abs/1505.04597' },
-  { org: 'vision-lab', name: 'deeplabv3plus-r50', task: 'semantic-segmentation', framework: 'PyTorch', license: 'Apache-2.0', summary: 'DeepLabV3+，空洞卷积 + 解码器。', tags: ['分割'], likes: 66, updatedAt: '2026-10-30T10:00:00+08:00', versions: [['v1.0.0', 'ready']], gpuMem: 3.4, weightsMB: 160, datasetId: 'Admin/road-scene-seg', paper: 'https://arxiv.org/abs/1802.02611' },
-  { org: 'vision-lab', name: 'segformer-b2', task: 'semantic-segmentation', framework: 'PyTorch', license: 'Apache-2.0', summary: 'SegFormer-B2，层级 Transformer 编码器 + 轻量 MLP 解码。', tags: ['Transformer', '分割'], likes: 89, updatedAt: '2026-11-13T10:00:00+08:00', versions: [['v1.0.0', 'ready']], gpuMem: 3.0, weightsMB: 105, datasetId: 'Admin/road-scene-seg', paper: 'https://arxiv.org/abs/2105.15203' },
-  { org: 'smart-city', name: 'bisenet-v2-road', task: 'semantic-segmentation', framework: 'PyTorch', license: 'Internal', summary: '双分支实时分割网络，最新版本构建失败待修复。', tags: ['实时', '分割'], likes: 14, updatedAt: '2026-11-19T07:10:00+08:00', versions: [['v1.1.0', 'failed'], ['v1.0.0', 'ready']], gpuMem: 1.2, weightsMB: 25, datasetId: 'Admin/road-scene-seg' },
-  { org: 'medical-ai', name: 'mask-rcnn-nuclei', task: 'instance-segmentation', framework: 'PyTorch', license: 'Internal', summary: 'Mask R-CNN 细胞核实例分割。', tags: ['医学', '实例分割'], likes: 8, updatedAt: '2026-09-29T10:00:00+08:00', versions: [['v1.0.0', 'ready']], gpuMem: 3.6, weightsMB: 170, datasetId: 'Admin/cell-nuclei-seg' },
-  { org: 'medical-ai', name: 'star-nuclei-net', task: 'instance-segmentation', framework: 'PyTorch', license: 'Internal', summary: '星形多边形表示的细胞核分割，对粘连核更鲁棒。', tags: ['医学', '实例分割'], likes: 11, updatedAt: '2026-10-05T10:00:00+08:00', versions: [['v1.0.0', 'ready']], gpuMem: 1.8, weightsMB: 25, datasetId: 'Admin/cell-nuclei-seg' },
-  { org: 'signal-team', name: 'fft-envelope-svm', task: 'signal-processing', framework: 'NumPy', license: 'Internal', summary: '包络谱特征 + SVM 的传统故障诊断方案，无需 GPU。', tags: ['传统算法', 'CPU'], likes: 21, updatedAt: '2026-11-05T10:00:00+08:00', versions: [['v2.0.0', 'ready'], ['v1.0.0', 'ready']], gpuMem: 0, weightsMB: 1, datasetId: 'Admin/vibration-signals' },
-  { org: 'signal-team', name: 'cnn1d-fault', task: 'signal-processing', framework: 'PyTorch', license: 'Internal', summary: '一维卷积网络端到端故障分类。', tags: ['深度学习', '时序'], likes: 17, updatedAt: '2026-11-07T10:00:00+08:00', versions: [['v1.0.0', 'ready']], gpuMem: 0.5, weightsMB: 4, datasetId: 'Admin/vibration-signals' },
-  { org: 'signal-team', name: 'alns-vrptw', task: 'optimization', framework: 'NumPy', license: 'MIT', summary: '自适应大邻域搜索求解带时间窗车辆路径问题。', tags: ['运筹优化', '启发式'], likes: 15, updatedAt: '2026-07-20T10:00:00+08:00', versions: [['v1.0.0', 'ready']], gpuMem: 0, weightsMB: 0, datasetId: 'Admin/vrp-instances' },
+/** 六项算法共用的交付文档（入库材料包中的实际文件与大小） */
+const DOCS: { key: string; file: string; size: number }[] = [
+  { key: 'basicForm', file: '01_厂商材料与算法基础信息申报表.docx', size: 60425 },
+  { key: 'manual', file: '02_算法说明与使用边界.docx', size: 48397 },
+  { key: 'apiDoc', file: '03_算法接口对接说明.docx', size: 51691 },
+  { key: 'modelDoc', file: '04_模型说明与12个权重文件清单.docx', size: 56024 },
+  { key: 'deployManual', file: '05_部署运维与配置说明.docx', size: 54318 },
+  { key: 'whitepaper', file: '06_六项算法原理说明.docx', size: 44898 },
 ]
 
-const baseImage = (f: Framework) =>
-  f === 'TensorRT' ? 'algohub/tensorrt:10.3-cuda12.4' : f === 'ONNX' ? 'algohub/onnxruntime-gpu:1.19-cuda12.1' : f === 'NumPy' ? 'algohub/python-cpu:3.11' : 'algohub/pytorch:2.4-cuda12.1'
+/** 共用的输入与场景条件（02 说明“输入与场景条件”） */
+const CONDITIONS = {
+  pixel: '尚未确定生产适用的最小/最大分辨率与目标像素阈值',
+  baffle: '目标完整、无遮挡；每个识别区域对应一个目标',
+  image: '清晰；避免严重反光、过曝、运动模糊、强透视和过度缩图',
+}
 
-function readme(s: Seed, labels: string[]): string {
-  return `# ${s.name}
+const REQUEST_EXAMPLE = '{"recognition_areas":[{"area_id":"1","x1":225,"y1":75,"x2":431,"y2":145}]}'
 
-${s.summary}
+interface Seed {
+  serviceCode: string
+  fullName: string
+  shortName: string
+  target: string
+  method: string
+  task: TaskType
+  output: string
+  limit: string
+  extraFields: string // 响应中的可选附加字段
+  code: string[]
+  models: { file: string; mib: number; structure: string; params: string; preprocess: string }[]
+  outputMapping: string
+  metrics: { name: string; value: string }[]
+  labels: string[]
+  resultExample: string
+}
 
-## 模型说明
+const SEEDS: Seed[] = [
+  {
+    serviceCode: 'LEDmeter',
+    fullName: '红色LED数显识别',
+    shortName: '红色数显',
+    target: '红色LED数字及小数点',
+    method: '数字定向框检测与横向排序',
+    task: 'ocr',
+    output: '数字字符串，保留小数点与前导零',
+    limit: '需要清晰完整的数字窗口；反光、断笔或小数点过小可能漏检。',
+    extraFields: '不返回置信度',
+    code: ['Code/LED_algorithm.py'],
+    models: [{ file: 'Model/LED_red.pt', mib: 5.41, structure: 'OBBModel', params: '2,663,652', preprocess: '按区域裁剪BGR图像，等比例缩放至高160，再由Ultralytics OBB预测器预处理；推理尺寸160。' }],
+    outputMapping: '定向框、类别ID、检测置信度；以横向位置排序拼接。类别0～9为数字、10为point并映射为“.”。未检出为失败，不补0。',
+    metrics: [{ name: '红色LED数显', value: 'P 97.14%；R 99.38%；mAP50 99.39%；mAP50–95 96.70%' }],
+    labels: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.'],
+    resultExample: '"41.14"',
+  },
+  {
+    serviceCode: 'lightningmetermechnicalcount',
+    fullName: '避雷器电流表与放电计数识别',
+    shortName: '电流表及计数',
+    target: '避雷器电流指针表盘和放电计数窗口',
+    method: '表盘检测与OCR几何读数；计数数字检测',
+    task: 'ocr',
+    output: '电流表为数值；放电计数为数字字符串',
+    limit: '需分别配置完整表盘和计数窗口；现有计数样图014被识别为04。',
+    extraFields: '不返回置信度',
+    code: ['Code/full_algorithm_lightning.py', 'Code/mechanical_algorithm.py'],
+    models: [
+      { file: 'Model/lightning_meter.pt', mib: 5.62, structure: 'OBBModel（电流表检测）', params: '2,662,092', preprocess: '整表盘区域送入YOLO OBB；conf=0.3、iou=0.6。' },
+      { file: 'Model/lightning_meter.pth', mib: 200.58, structure: 'ResCRNN（电流表OCR）', params: '17,512,310', preprocess: '文字框包围区域裁剪，BGR转RGB再灰度化；Resize为32×128；均值0.5、标准差0.5归一化，输入N×1×32×128。' },
+      { file: 'Model/mechnical.pt', mib: 5.36, structure: 'OBBModel（放电计数）', params: '2,663,457', preprocess: '按区域裁剪，等比例缩放至高256；推理尺寸256。' },
+    ],
+    outputMapping: '表盘检测类别0=pointer、1=scale、2=text；OCR贪心CTC解码。计数类别0～9为数字，按横向位置拼接。',
+    metrics: [
+      { name: '避雷器电流表', value: 'P 96.82%；R 97.26%；mAP50 98.00%；mAP50–95 78.51%' },
+      { name: '放电计数', value: 'P 89.32%；R 94.76%；mAP50 96.12%；mAP50–95 90.78%' },
+    ],
+    labels: ['pointer', 'scale', 'text'],
+    resultExample: '0.42',
+  },
+  {
+    serviceCode: 'terminalblock',
+    fullName: '柱状压板状态识别',
+    shortName: '柱状压板',
+    target: '柱状压板投退外观',
+    method: '图像分类',
+    task: 'image-classification',
+    output: 'On=1，Off=0，其他标签=2；附标签与分类置信度',
+    limit: '一处区域对应一个压板；分类结果不能用作设备存在性判断。',
+    extraFields: 'label、confidence',
+    code: ['Code/terminal_block.py'],
+    models: [{ file: 'Model/terminal_block.pt', mib: 2.83, structure: 'ClassificationModel', params: '1,440,850', preprocess: '区域BGR数组由Ultralytics分类预测器进行颜色转换、缩放/裁剪及张量处理；模型尺寸224。' }],
+    outputMapping: '类别概率向量；0=Off、1=On，取top1；业务On→1、Off→0，其他标签→2。',
+    metrics: [{ name: '柱状压板', value: 'Top-1 100.00%' }],
+    labels: ['On', 'Off'],
+    resultExample: '1',
+  },
+  {
+    serviceCode: 'LEDlight',
+    fullName: 'GIS汇控状态灯亮灭识别',
+    shortName: 'GIS状态灯',
+    target: 'GIS汇控柜指示灯',
+    method: '图像分类与颜色亮灭解析',
+    task: 'image-classification',
+    output: '亮=1、灭=0；附颜色、原始标签和置信度',
+    limit: '过曝、反光或环境光可能混淆亮灭；on/off标签对应空颜色字符串。',
+    extraFields: 'label、color、confidence',
+    code: ['Code/LED_light.py'],
+    models: [{ file: 'Model/LED_light.pt', mib: 2.85, structure: 'ClassificationModel', params: '1,451,098', preprocess: '区域BGR数组由Ultralytics分类预测器处理；模型尺寸224。' }],
+    outputMapping: '类别依次为greenoff、greenon、off、on、redoff、redon、whiteoff、whiteon、yellowoff、yellowon；解析末尾on/off，剩余前缀为color。',
+    metrics: [{ name: 'GIS状态灯', value: 'Top-1 100.00%' }],
+    labels: ['greenoff', 'greenon', 'off', 'on', 'redoff', 'redon', 'whiteoff', 'whiteon', 'yellowoff', 'yellowon'],
+    resultExample: '1',
+  },
+  {
+    serviceCode: 'openandcloseknob',
+    fullName: '旋钮档位状态识别',
+    shortName: '旋钮档位',
+    target: '五类外观旋钮',
+    method: '定向框检测与角度分档',
+    task: 'object-detection',
+    output: '从0开始的档位编号；附角度与检测置信度',
+    limit: '外观模型与knobtype分别配置，档位文字含义需点位确认。',
+    extraFields: 'angle、confidence',
+    code: ['Code/knobrecognition.py'],
+    models: [{ file: 'Model/knobopenandclose.pt', mib: 7.7, structure: 'OBBModel', params: '2,661,702', preprocess: '区域送入Ultralytics OBB，conf=0.5；各外观尺寸配置见模型结构与参数核对.json。' }],
+    outputMapping: '每区域选择最高置信度框，几何长边计算角度，按knobtype阈值分档；结果等于严格大于阈值的数量。',
+    metrics: [{ name: '开合旋钮', value: 'P 96.91%；R 97.06%；mAP50 98.28%；mAP50–95 97.53%' }],
+    labels: ['旋钮'],
+    resultExample: '1',
+  },
+  {
+    serviceCode: 'outsideliquid',
+    fullName: '主变油位识别',
+    shortName: '主变油位',
+    target: '主变油位显示区域',
+    method: 'ResNet18类网络分类与偏移回归',
+    task: 'image-classification',
+    output: '一位小数读数；附类别、基础刻度、偏移和分类置信度',
+    limit: '需现场核定刻度和单位；当前结果不自动转换为百分比或体积。',
+    extraFields: 'class_id、class_value、offset、confidence',
+    code: ['Code/liquidmeter_continuous_outside.py'],
+    models: [{ file: 'Model/outsideliquid.pt', mib: 42.99, structure: 'GaugeResNet18', params: '11,251,026', preprocess: 'BGR转RGB；等比例缩放填充到128×320（BICUBIC，背景RGB(30,34,30)）；/255后按ImageNet均值方差归一化，输入N×3×320×128。' }],
+    outputMapping: '输出logits[N,17]与offset[N,1]；类别对应1.0～9.0（步长0.5），偏移截断到[-0.7,0.7]，读数=基础刻度+偏移×0.5，保留一位小数。',
+    metrics: [{ name: '主变油位', value: 'P 95.2%' }],
+    labels: Array.from({ length: 17 }, (_, i) => (1 + i * 0.5).toFixed(1)),
+    resultExample: '4.6',
+  },
+]
 
-- **任务**：${s.task}
-- **框架**：${s.framework}
-- **输入**：RGB 图像（自动缩放），${s.task.includes('segmentation') ? '输出逐像素类别 / 实例掩码' : s.task === 'object-detection' ? '输出边界框、类别与置信度' : '输出类别概率'}
-- **资源声明**：显存 ${s.gpuMem} GB（见 \`algo.yaml\`）
-${s.paper ? `- **参考论文**：[${s.paper}](${s.paper})\n` : ''}
-## 类别
+function readme(s: Seed): string {
+  const knob = s.serviceCode === 'openandcloseknob'
+  return `# ${s.fullName}
 
-${labels.slice(0, 8).map((l) => `\`${l}\``).join(' · ')}${labels.length > 8 ? ' …' : ''}
+${s.target}识别，技术路线：${s.method}。适用于新能源场站设备可见光巡检，按点位矩形区域调用，逐区域返回 JSON 读数或状态。
 
-## 接口实现
+| 项 | 内容 |
+| --- | --- |
+| 简称 | ${s.shortName} |
+| serviceCode | \`${s.serviceCode}\` |
+| 版本 | V0.1 |
+| 厂商 | 浙江锋云深蓝科技有限公司 |
+| 输出 | ${s.output} |
 
-本算法按平台 SDK 规范实现 \`load()\` 与 \`predict()\`，同一份代码同时用于 **批量评测** 与 **单图推理**：
+## 使用边界
 
-\`\`\`python
-from algohub_sdk import BasePredictor, Image
+- ${s.limit}
+- 输入为可见光静态图像，不提供视频流调度、告警推送或设备控制。
+- 拍摄条件：目标完整、清晰、无遮挡；避免严重反光、过曝、运动模糊、强透视和过度缩图。
+- success / status 仅表示流程返回了结果，不等于读数或状态已通过真值核验。
 
-class Predictor(BasePredictor):
-    def load(self, weights_dir: str):
-        self.model = build_model(weights_dir)
+## 厂商自测指标
 
-    def predict(self, image: Image) -> dict:
-        return self.model(image)
+> 来自厂商提交的评价表，未经平台评测复核。
+
+| 算法或子类型 | 指标 |
+| --- | --- |
+${s.metrics.map((m) => `| ${m.name} | ${m.value} |`).join('\n')}
+
+## 模型
+
+| 权重文件 | 大小 | 结构 | 参数个数 |
+| --- | --- | --- | --- |
+${s.models.map((m) => `| \`${m.file.replace('Model/', '')}\` | ${m.mib} MiB | ${m.structure} | ${m.params} |`).join('\n')}
+
+预处理：${s.models.map((m) => m.preprocess).join(' ')}
+
+输出解析：${s.outputMapping}
+
+参数类型均为 float32；未交付 FP16 / INT8 量化模型、ONNX 或 TensorRT 文件。
+
+## 接口
+
+\`POST /Inspection_service_visible_light\`（multipart/form-data，默认端口 6899），\`GET /health\` 查看服务状态。
+
+| 字段 | 说明 |
+| --- | --- |
+| image | 当前图像，建议 JPEG / PNG |
+| serviceCode | \`${s.serviceCode}\`（区分大小写） |
+| recognition_config | JSON，含非空 recognition_areas 列表 |
+| tempImage | 可选模板图；提供时区域坐标基于模板 |
+${knob ? '| knobtype | 必填，0～6，角度分档规则（见下表） |\n' : ''}
+请求示例：
+
+\`\`\`json
+${REQUEST_EXAMPLE}
 \`\`\`
 
-## 训练细节
+响应示例：
 
-| 项 | 值 |
-| --- | --- |
-| 训练数据 | \`${s.datasetId ?? '—'}\` |
-| 输入尺寸 | ${s.task === 'object-detection' ? '640×640' : s.task.includes('segmentation') ? '1024×512' : '224×224'} |
-| 优化器 | AdamW, lr=1e-3, cosine |
-| Epochs | ${s.task === 'object-detection' ? 300 : 100} |
+\`\`\`json
+{"code":200,"message":null,"success":true,"data":[{"area_id":"1","status":200,"result":${s.resultExample},"message":"识别成功"}]}
+\`\`\`
 
-## 已知局限
+可选附加字段：${s.extraFields}。服务无内置鉴权、用户权限或 TLS，需由接入平台配置访问控制。
+${
+  knob
+    ? `
+## 旋钮角度分档（knobtype）
 
-- 对极端光照、强反光场景的效果下降明显。
-- 未在夜间红外图像上验证。
+| knobtype | 角度阈值（度） | 结果范围 |
+| --- | --- | --- |
+| 0 | 30 | 0～1 |
+| 1 | 0 | 0～1 |
+| 2 | -30、30 | 0～2 |
+| 3 | -15、15 | 0～2 |
+| 4 | -23、23、65 | 0～3 |
+| 5 | -67、-23、23、65 | 0～4 |
+| 6 | -30 | 0～1 |
+
+结果等于严格大于阈值的数量；恰等于阈值时归入较低档位。档位名称须由点位配置建立。
+`
+    : ''
+}
+## 运行环境
+
+- 最低配置规划值：4 核 x86-64 CPU、8 GB 系统内存、单卡 8 GB 显存、40 GB 可用磁盘
+- Linux/amd64 + NVIDIA GPU，Docker 离线镜像 \`${IMAGE_TAG}\`（Python 3.11、PyTorch 2.10.0、CUDA 12.6）
+- 单进程、模型按需加载、串行推理；尚未完成目标 GPU 服务器压测，不承诺固定时延或并发吞吐
 `
 }
 
-export const algorithms: Algorithm[] = S.map((s, i) => {
-  const ds = datasets.find((d) => d.id === s.datasetId)
-  const labels = ds ? ds.classes.filter((c) => !c.startsWith('……')) : ['目标']
-  const versions: AlgoVersion[] = s.versions.map(([v, status], k) => {
-    const created = new Date(new Date(s.updatedAt).getTime() - k * 86400000 * 23).toISOString()
-    const hasImage = status === 'ready'
-    const log = [
-      `[build] 拉取基础镜像 ${baseImage(s.framework)}`,
-      `[build] 校验 algo.yaml …… OK`,
-      `[build] 安装依赖 requirements.txt（${12 + (i % 7)} 个包）`,
-      `[build] 复制代码与入口 predictor:Predictor`,
-    ]
-    if (status === 'ready') log.push('[build] 冒烟测试：predict(sample.jpg) …… OK', `[build] 推送镜像 sha256:${fakeSha(s.name + v).slice(0, 12)}…`, '[build] 完成，用时 3m12s')
-    if (status === 'failed') log.push('[build] 冒烟测试：predict(sample.jpg)', "[error] ModuleNotFoundError: No module named 'mmcv._ext'", '[error] 构建失败：请检查依赖版本是否与基础镜像 CUDA 版本匹配')
-    if (status === 'building') log.push('[build] 安装依赖中 … (47%)')
-    if (status === 'pending_review') log.splice(0, log.length, '[review] 外部提交，等待管理员审核后开始构建')
-    return {
-      version: v,
-      status,
-      createdAt: created,
-      createdBy: s.org === 'partner-xyz' ? 'xy.liu' : s.org === 'univ-cvlab' ? 'qm.he' : s.org === 'deepsee' ? 'ds.zhang' : ['chen.wei', 'li.na', 'zhao.lei', 'wang.fang', 'sun.yu', 'wu.hao'][i % 6],
-      changelog: k === 0 ? (status === 'failed' ? '升级到新版算子库' : '优化后处理阈值，提升召回') : k === s.versions.length - 1 ? '首次发布' : '数据增强策略调整',
-      imageDigest: hasImage ? 'sha256:' + fakeSha(s.name + v) : undefined,
-      weightsHash: 'sha256:' + fakeSha('w' + s.name + v),
-      weightsSize: s.weightsMB * 1024 * 1024,
-      baseImage: baseImage(s.framework),
-      gpuMem: s.gpuMem,
-      buildLog: log,
-    }
-  })
-  const latest = s.versions[0][0].slice(1)
-  const algoYaml = `name: ${s.name}
-version: ${latest}
-task: ${s.task}
-framework: ${s.framework}
-entry: predictor:Predictor
-base_image: ${baseImage(s.framework)}
-resources:
-  gpu_mem: ${s.gpuMem}GB
-  cpu: 4
-  memory: 8GB
-weights:
-  - uri: store://weights/${s.org}/${s.name}/${latest}/model.${s.framework === 'ONNX' ? 'onnx' : s.framework === 'TensorRT' ? 'engine' : 'pth'}
-    sha256: ${fakeSha('w' + s.name + s.versions[0][0]).slice(0, 16)}…
-labels: [${labels.slice(0, 6).join(', ')}${labels.length > 6 ? ', …' : ''}]
-`
+function declaration(s: Seed): AlgoDeclaration {
   return {
-    id: `${s.org}/${s.name}`,
-    org: s.org,
-    name: s.name,
-    task: s.task,
-    framework: s.framework,
-    license: s.license,
-    tags: s.tags,
-    summary: s.summary,
-    readme: readme(s, labels),
-    paperUrl: s.paper,
-    likes: s.likes,
-    evalCount: 0,
-    updatedAt: s.updatedAt,
-    versions,
-    algoYaml,
-    labels,
-    files: [
-      { path: 'algo.yaml', size: 612, kind: 'config' },
-      { path: 'README.md', size: 4200 + i * 31, kind: 'doc' },
-      { path: 'predictor.py', size: 3100 + i * 57, kind: 'code' },
-      { path: 'model/', size: 18000 + i * 200, kind: 'code' },
-      { path: 'requirements.txt', size: 220, kind: 'config' },
-      ...(s.weightsMB > 0 ? [{ path: `weights/model.${s.framework === 'ONNX' ? 'onnx' : s.framework === 'TensorRT' ? 'engine' : 'pth'}`, size: s.weightsMB * 1024 * 1024, kind: 'weights' as const }] : []),
+    packageInfo: { id: s.serviceCode, version: '0.1', vendor: { id: VENDOR_ID, zh_CN: VENDOR_ZH } },
+    management: {
+      id: s.serviceCode,
+      name: { zh_CN: s.fullName },
+      classifications: [], // 材料中“厂商及平台登记编码”为空，待平台分配
+      places: ['新能源场站'],
+      description: { zh_CN: `识别对象：${s.target}。技术路线：${s.method}。输出：${s.output}。` },
+      cover: [], // 材料未提供封面
+      conditions: { description: { zh_CN: { ...CONDITIONS, other: s.limit } } },
+    },
+    technical: {
+      version: '0.1',
+      analysisSources: [{ type: 'picture', format: ['jpg', 'png'] }],
+      environment: {
+        chip: 'NVIDIA GPU',
+        basePackage: { id: 'cuda', minorVersion: '12.6', majorVersion: '12.6', relatedPodImageName: IMAGE_TAG },
+        driver: { type: 'nvidia', minorVersion: 'R560', majorVersion: '' },
+      },
+      requirement: { videoMemory: 8192, disk: 40960, memory: 8192, AImemory: 0, CPU: 4 },
+      abilityInfos: [], // 尚未完成目标 GPU 服务器压测
+      regulation: { input: REQUEST_EXAMPLE, output: `{"area_id":"1","status":200,"result":${s.resultExample},"message":"识别成功"}`, eventCode: s.serviceCode },
+    },
+    params: {
+      // 03 接口说明：未实现标准多边形、屏蔽区与规则区，也未限制区域数量
+      generalParam: { enabled: false },
+      detectRegion: false,
+      maskRegion: false,
+      ruleRegion: { enabled: false, crossDirections: [], polygonTypes: [] },
+      numberCondition: false,
+      sizeFilter: false,
+      eventTypes: [s.serviceCode],
+    },
+    deliveries: DOCS.map((d) => ({ key: d.key, fileName: d.file, size: d.size })),
+    checklist: ['m-overview', 'm-scene', 'm-io', 'm-perf', 'm-env', 'm-limit', 'd-params', 'd-weights', 'd-preprocess', 'd-output', 'd-quant', 'd-files'],
+  }
+}
+
+function files(s: Seed): AlgoFile[] {
+  return [
+    ...s.code.map((p) => ({ path: p, size: 0, kind: 'code' as const })),
+    ...s.models.map((m) => ({ path: m.file, size: Math.round(m.mib * MiB), kind: 'weights' as const })),
+    ...DOCS.map((d) => ({ path: `docs/${d.file}`, size: d.size, kind: 'doc' as const })),
+  ]
+}
+
+function version(s: Seed): AlgoVersion {
+  return {
+    version: 'v0.1',
+    status: 'pending_review',
+    createdAt: SUBMITTED_AT,
+    createdBy: SUBMITTER,
+    changelog: '首次入库（六项巡检算法入库材料 2026-11-18）',
+    weightsSize: Math.round(s.models.reduce((a, m) => a + m.mib, 0) * MiB),
+    baseImage: IMAGE_TAG,
+    gpuMem: 8,
+    buildLog: [
+      '[review] 厂商入库材料已登记，等待管理员审核',
+      `[review] 交付方式：GPU Docker 离线镜像 ${IMAGE_TAG}；本次材料包仅含 6 份文档，未包含镜像 tar 与权重文件`,
+      '[review] 厂商说明：未执行本地 GPU 验证，尚未完成目标服务器压测',
     ],
   }
-})
+}
 
-export const algoSeedsGpu = Object.fromEntries(S.map((s) => [`${s.org}/${s.name}`, s.gpuMem]))
+export const algorithms: Algorithm[] = SEEDS.map((s) => ({
+  id: `${VENDOR_ID}/${s.serviceCode}`,
+  org: VENDOR_ID,
+  name: s.serviceCode,
+  task: s.task,
+  framework: 'PyTorch',
+  license: '/', // 第三方组件及权重授权待权利人确认
+  tags: ['新能源场站', '可见光巡检', s.shortName],
+  summary: `${s.fullName}：${s.method}，输出${s.output}。`,
+  readme: readme(s),
+  likes: 0,
+  evalCount: 0,
+  updatedAt: SUBMITTED_AT,
+  versions: [version(s)],
+  files: files(s),
+  algoYaml: `name: ${s.serviceCode}
+version: 0.1
+task: ${s.task}
+framework: PyTorch
+entry: service.py
+service_code: ${s.serviceCode}
+base_image: ${IMAGE_TAG}
+http:
+  port: 6899
+  path: /Inspection_service_visible_light
+resources:
+  gpu_mem: 8GB
+  cpu: 4
+  memory: 8GB
+  disk: 40GB
+weights:
+${s.models.map((m) => `  - ${m.file}  # ${m.mib} MiB`).join('\n')}
+`,
+  labels: s.labels,
+  declaration: declaration(s),
+}))
