@@ -228,30 +228,34 @@ async function submit() {
   submitting.value = true
   try {
     const d = declaration.value
+    // 算法卡片 = 使用说明；标识、版本、分类、使用要求、运行环境等结构化信息只在“申报信息”中展示
+    const fence = '```'
     const readme = `# ${f.nameZh}${f.nameEn ? `（${f.nameEn}）` : ''}
 
 ${f.descZh}
 
-## 基本信息
+## 工作原理
 
-| 项 | 内容 |
-| --- | --- |
-| 算法标识 | \`${f.id}\` |
-| 版本 | ${f.version} |
-| 厂商 | ${d.packageInfo.vendor.zh_CN} |
-| 算法分类 | ${f.classifications.join('、')} |
-| 适用场所 | ${f.places.join('、')} |
+> 待补充：可参考交付的《算法原理白皮书》。
 
-## 使用要求
+## 调用方式
 
-- 目标像素：${f.cond.pixel}
-- 目标遮挡：${f.cond.baffle}
-- 画面质量：${f.cond.image}
-${f.cond.weather ? `- 天气：${f.cond.weather}\n` : ''}${f.cond.light ? `- 光线：${f.cond.light}\n` : ''}${f.cond.other ? `- 其他：${f.cond.other}\n` : ''}
-## 运行环境
+${fence}json
+${f.regulation.input}
+${fence}
 
-- 芯片：${f.chip}
-- 资源：显存 ${f.req.videoMemory} MB · 内存 ${f.req.memory} MB · 磁盘 ${f.req.disk} MB · CPU ${f.req.CPU} 核
+## 输出
+
+${fence}json
+${f.regulation.output}
+${fence}
+
+事件信息：\`${f.regulation.eventCode}\`
+
+## 性能
+
+> 待补充：厂商自测指标；平台评测成绩见右侧。
+
 `
     const a = await createAlgorithm({
       org: f.owner,

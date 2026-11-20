@@ -162,75 +162,64 @@ const SEEDS: Seed[] = [
   },
 ]
 
+/** 06 六项算法原理说明（按算法摘录） */
+const PRINCIPLES: Record<string, string> = {
+  LEDmeter:
+    '使用定向目标框检测数字。图像按固定高度等比例缩放，预测 conf=0.5、agnostic_nms=True，按检测框左侧横坐标排序，映射为字符并拼接；包含小数点类别。拼接后校验可形成有限数值，但返回字符串以保留前导零。没有补字、缺位纠正或固定长度填充，漏检可能形成合法但错误的数字串。',
+  lightningmetermechnicalcount:
+    '电流表：YOLO OBB 检测指针、刻度与文字，ResCRNN（残差卷积 + 双向 LSTM + LayerNorm，贪心 CTC 解码）识别刻度文本；通过刻度与文字的空间关系配对、拟合刻度圆弧、计算指针与刻度角度得到读数。指针候选按距图像中心距离选择；刻度不足、文字无法解析或几何条件不成立会影响结果；单位取决于表盘及点位语义，不做工程单位换算。放电计数：定向框检测数字，按横坐标排序拼接，只包含数字类别。',
+  terminalblock:
+    '对单目标区域做图像分类，取最高概率类别并映射 On / Off。分类概率仅描述给定输入上的类别响应，未训练设备存在性判定，非目标区域也可能得到高概率类别。',
+  LEDlight:
+    '对单目标区域做图像分类，以类别后缀 on / off 得到亮灭，以前缀得到颜色。分类概率仅描述给定输入上的类别响应，非目标区域也可能得到高概率类别。',
+  openandcloseknob:
+    '五个外观模型分别检测旋钮定向框，多个候选时取最高置信度目标；由定向框边长关系确定方向并计算角度，按 knobtype 阈值转换为从 0 开始的档位索引。不解析面板文字；相同角度规则不代表不同设备具有相同档位语义。',
+  outsideliquid:
+    'GaugeResNet18：卷积 stem 与四级残差块（每级两个 BasicBlock，通道 64/128/256/512），全局平均池化后分别接 17 类分类头与偏移回归头。分类头定位 0.5 间距的基础刻度，回归头在该刻度附近修正。模型不输出液体体积或百分比。',
+}
+
+/**
+ * 算法卡片 = 面向使用者的说明文档：做什么、怎么调用、输出什么、效果如何、模型细节、已知局限。
+ * 名称 / 标识 / 版本 / 厂商、使用要求与已知局限、运行环境与资源、性能规格属于结构化信息，只在“申报信息”中展示，这里不重复。
+ */
 function readme(s: Seed): string {
   const knob = s.serviceCode === 'openandcloseknob'
   return `# ${s.fullName}
 
-${s.target}识别，技术路线：${s.method}。适用于新能源场站设备可见光巡检，按点位矩形区域调用，逐区域返回 JSON 读数或状态。
+识别${s.target}，返回${s.output}。
 
-| 项 | 内容 |
-| --- | --- |
-| 简称 | ${s.shortName} |
-| serviceCode | \`${s.serviceCode}\` |
-| 版本 | V0.1 |
-| 厂商 | 浙江锋云深蓝科技有限公司 |
-| 输出 | ${s.output} |
+## 工作原理
 
-## 使用边界
+${PRINCIPLES[s.serviceCode] ?? s.method}
 
-- ${s.limit}
-- 输入为可见光静态图像，不提供视频流调度、告警推送或设备控制。
-- 拍摄条件：目标完整、清晰、无遮挡；避免严重反光、过曝、运动模糊、强透视和过度缩图。
-- success / status 仅表示流程返回了结果，不等于读数或状态已通过真值核验。
+## 调用方式
 
-## 厂商自测指标
-
-> 来自厂商提交的评价表，未经平台评测复核。
-
-| 算法或子类型 | 指标 |
-| --- | --- |
-${s.metrics.map((m) => `| ${m.name} | ${m.value} |`).join('\n')}
-
-## 模型
-
-| 权重文件 | 大小 | 结构 | 参数个数 |
-| --- | --- | --- | --- |
-${s.models.map((m) => `| \`${m.file.replace('Model/', '')}\` | ${m.mib} MiB | ${m.structure} | ${m.params} |`).join('\n')}
-
-预处理：${s.models.map((m) => m.preprocess).join(' ')}
-
-输出解析：${s.outputMapping}
-
-参数类型均为 float32；未交付 FP16 / INT8 量化模型、ONNX 或 TensorRT 文件。
-
-## 接口
-
-\`POST /Inspection_service_visible_light\`（multipart/form-data，默认端口 6899），\`GET /health\` 查看服务状态。
+\`POST /Inspection_service_visible_light\`（multipart/form-data），按点位矩形区域逐区域返回结果；\`GET /health\` 查看服务状态与已加载模型。
 
 | 字段 | 说明 |
 | --- | --- |
 | image | 当前图像，建议 JPEG / PNG |
 | serviceCode | \`${s.serviceCode}\`（区分大小写） |
-| recognition_config | JSON，含非空 recognition_areas 列表 |
-| tempImage | 可选模板图；提供时区域坐标基于模板 |
+| recognition_config | JSON，含非空 recognition_areas 列表；区域编号不可重复 |
+| tempImage | 可选模板图；提供时区域坐标基于模板，confidence=low 时需人工复核 |
 ${knob ? '| knobtype | 必填，0～6，角度分档规则（见下表） |\n' : ''}
-请求示例：
-
 \`\`\`json
 ${REQUEST_EXAMPLE}
 \`\`\`
 
-响应示例：
+## 输出
 
 \`\`\`json
 {"code":200,"message":null,"success":true,"data":[{"area_id":"1","status":200,"result":${s.resultExample},"message":"识别成功"}]}
 \`\`\`
 
-可选附加字段：${s.extraFields}。服务无内置鉴权、用户权限或 TLS，需由接入平台配置访问控制。
+- result：${s.output}；失败为 null（禁止默认记为 0）
+- 可选附加字段：${s.extraFields}
+- success 仅表示所有区域都返回了结果，不等于读数已通过真值核验
 ${
   knob
     ? `
-## 旋钮角度分档（knobtype）
+### knobtype 角度分档
 
 | knobtype | 角度阈值（度） | 结果范围 |
 | --- | --- | --- |
@@ -246,11 +235,26 @@ ${
 `
     : ''
 }
-## 运行环境
+## 性能
 
-- 最低配置规划值：4 核 x86-64 CPU、8 GB 系统内存、单卡 8 GB 显存、40 GB 可用磁盘
-- Linux/amd64 + NVIDIA GPU，Docker 离线镜像 \`${IMAGE_TAG}\`（Python 3.11、PyTorch 2.10.0、CUDA 12.6）
-- 单进程、模型按需加载、串行推理；尚未完成目标 GPU 服务器压测，不承诺固定时延或并发吞吐
+> 厂商自测指标，未经平台评测复核；平台评测成绩见右侧。
+
+| 算法或子类型 | 指标 |
+| --- | --- |
+${s.metrics.map((m) => `| ${m.name} | ${m.value} |`).join('\n')}
+
+
+## 模型
+
+| 权重文件 | 结构 | 参数个数 |
+| --- | --- | --- |
+${s.models.map((m) => `| \`${m.file.replace('Model/', '')}\` | ${m.structure} | ${m.params} |`).join('\n')}
+
+- 预处理：${s.models.map((m) => m.preprocess).join(' ')}
+- 输出解析：${s.outputMapping}
+- 精度：float32；未交付 FP16 / INT8 量化模型、ONNX 或 TensorRT 文件
+
+> 使用要求与已知局限、运行环境与资源见“申报信息”；权重文件与镜像见“文件与版本”。
 `
 }
 

@@ -6,6 +6,7 @@ import { getAlgorithm, listBenchmarks, listEvals } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { fmtBytes, fmtDate, fmtMetric, timeAgo } from '@/utils/format'
+import { orgs } from '@/mock/orgs'
 import type { AlgoVersion } from '@/types'
 import StateView from '@/components/ui/StateView.vue'
 import OrgAvatar from '@/components/ui/OrgAvatar.vue'
@@ -27,6 +28,7 @@ const tab = computed(() => (route.query.tab as string) || 'card')
 const setTab = (t: string) => router.replace({ query: t === 'card' ? {} : { tab: t } })
 
 const { data: algo, loading, error } = useAsync(() => getAlgorithm(id.value))
+const orgName = (oid: string) => orgs.find((o) => o.id === oid)?.displayName ?? oid
 const editOpen = ref(false)
 const { data: runs } = useAsync(() => listEvals({ algorithmId: id.value }))
 const { data: benches } = useAsync(() => listBenchmarks())
@@ -123,11 +125,15 @@ const totalSize = computed(() => algo.value?.files.reduce((s, f) => s + f.size, 
             </div>
 
             <div class="card space-y-2 p-4 text-sm">
+              <div class="flex justify-between gap-3"><span class="text-gray-500">厂商</span><RouterLink :to="`/orgs/${algo.org}`" class="truncate hover:text-brand-600">{{ orgName(algo.org) }}</RouterLink></div>
+              <div class="flex justify-between gap-3"><span class="text-gray-500">标识</span><span class="mono truncate">{{ algo.name }}</span></div>
               <div class="flex justify-between"><span class="text-gray-500">最新版本</span><span class="mono">{{ algo.versions[0].version }}</span></div>
               <div class="flex justify-between"><span class="text-gray-500">状态</span><StatusBadge :status="algo.versions[0].status" /></div>
-              <div class="flex justify-between"><span class="text-gray-500">显存声明</span><span>{{ algo.versions[0].gpuMem }} GB</span></div>
-              <div class="flex justify-between"><span class="text-gray-500">权重大小</span><span>{{ fmtBytes(algo.versions[0].weightsSize) }}</span></div>
               <div class="flex justify-between"><span class="text-gray-500">更新</span><span>{{ timeAgo(algo.updatedAt) }}</span></div>
+              <div class="space-y-1 border-t border-gray-100 pt-2 text-xs dark:border-gray-800">
+                <button v-if="algo.declaration" class="block cursor-pointer text-brand-600 hover:underline" @click="setTab('declaration')">适用条件、运行环境与资源 → 申报信息</button>
+                <button class="block cursor-pointer text-brand-600 hover:underline" @click="setTab('files')">权重、镜像与构建日志 → 文件与版本</button>
+              </div>
             </div>
           </aside>
         </div>

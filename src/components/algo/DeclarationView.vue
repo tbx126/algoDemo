@@ -13,6 +13,7 @@ const text = computed(() => (file.value === 'pkg' ? packageInfoXml(props.d.packa
 const m = computed(() => props.d.management)
 const t = computed(() => props.d.technical)
 const p = computed(() => props.d.params)
+const CONDITION_LABELS: Record<string, string> = { weather: '天气', light: '光线', pixel: '目标像素', baffle: '遮挡', image: '画面质量', other: '其他' }
 const supports = computed(() => [
   { k: '通用参数 generalParam', on: p.value.generalParam.enabled },
   { k: '检测区域 detectRegionList', on: p.value.detectRegion },
@@ -26,27 +27,34 @@ const supports = computed(() => [
 <template>
   <div class="grid gap-6 lg:grid-cols-[1fr_420px]">
     <div class="min-w-0 space-y-6">
+      <p class="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-gray-800/60 dark:text-gray-400">
+        按《算法标准 1.0》提交的结构化信息，用于审核与平台对接；工作原理、调用方式、输出、性能与模型细节见“算法卡片”。
+      </p>
       <section class="card p-5">
-        <h2 class="section-title mb-3">算法属性</h2>
+        <h2 class="section-title mb-3">算法属性 <span class="mono text-xs font-normal text-gray-400">managementinfo.json</span></h2>
         <dl class="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
           <div><dt class="text-xs text-gray-500">名称</dt><dd>{{ m.name.zh_CN }}<span v-if="m.name.en_US" class="text-gray-500"> · {{ m.name.en_US }}</span></dd></div>
           <div><dt class="text-xs text-gray-500">算法标识 / 版本</dt><dd class="mono">{{ m.id }} @ {{ t.version }}</dd></div>
           <div><dt class="text-xs text-gray-500">厂商</dt><dd>{{ d.packageInfo.vendor.zh_CN }} <code class="mono text-xs text-gray-400">{{ d.packageInfo.vendor.id }}</code></dd></div>
           <div><dt class="text-xs text-gray-500">算法分类</dt><dd class="flex flex-wrap gap-1"><code v-for="c in m.classifications" :key="c" class="chip mono">{{ c }}</code><span v-if="!m.classifications.length" class="text-gray-400">待平台分配</span></dd></div>
+          <div class="sm:col-span-2"><dt class="text-xs text-gray-500">功能说明</dt><dd>{{ m.description.zh_CN }}</dd></div>
           <div class="sm:col-span-2"><dt class="text-xs text-gray-500">适用场所</dt><dd class="flex flex-wrap gap-1"><span v-for="c in m.places" :key="c" class="chip">{{ c }}</span></dd></div>
           <div class="sm:col-span-2"><dt class="text-xs text-gray-500">使用要求</dt>
-            <dd class="mt-1 grid gap-1 sm:grid-cols-2">
-              <span v-for="(v, k) in m.conditions.description.zh_CN" v-show="v" :key="k"><code class="mono text-xs text-gray-400">{{ k }}</code> {{ v }}</span>
+            <dd class="mt-1 space-y-1">
+              <p v-for="(v, k) in m.conditions.description.zh_CN" v-show="v" :key="k"><span class="inline-block w-20 text-gray-500">{{ CONDITION_LABELS[k] ?? k }}</span>{{ v }}</p>
             </dd>
           </div>
+          <div><dt class="text-xs text-gray-500">适用 / 不适用场景</dt><dd>{{ m.conditions.suitabilities?.length ?? 0 }} / {{ m.conditions.unsuitabilities?.length ?? 0 }}<span v-if="!m.conditions.suitabilities?.length && !m.conditions.unsuitabilities?.length" class="text-gray-400">（未提供）</span></dd></div>
+          <div><dt class="text-xs text-gray-500">封面</dt><dd><span v-if="m.cover.length">{{ m.cover.map((c) => c.fileName).join('、') }}</span><span v-else class="text-gray-400">未提供</span></dd></div>
         </dl>
       </section>
 
       <section class="card p-5">
-        <h2 class="section-title mb-3">技术信息</h2>
+        <h2 class="section-title mb-3">技术信息 <span class="mono text-xs font-normal text-gray-400">technicalinfo.json</span></h2>
         <dl class="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
           <div><dt class="text-xs text-gray-500">数据类型</dt><dd class="flex flex-wrap gap-1"><span v-for="(s, i) in t.analysisSources" :key="i" class="chip">{{ s.type }}<template v-if="s.format?.length"> · {{ s.format.join('/') }}</template><template v-if="s.min"> · {{ s.min }}–{{ s.max }}</template></span></dd></div>
-          <div><dt class="text-xs text-gray-500">芯片</dt><dd>{{ t.environment.chip }}<span v-if="t.environment.basePackage" class="text-gray-500"> · {{ t.environment.basePackage.id }} {{ t.environment.basePackage.minorVersion }}–{{ t.environment.basePackage.majorVersion }}</span></dd></div>
+          <div><dt class="text-xs text-gray-500">运行环境</dt><dd>{{ t.environment.chip }}<span v-if="t.environment.basePackage" class="text-gray-500"> · {{ t.environment.basePackage.id }} {{ t.environment.basePackage.minorVersion }}<template v-if="t.environment.basePackage.majorVersion !== t.environment.basePackage.minorVersion">–{{ t.environment.basePackage.majorVersion }}</template></span><span v-if="t.environment.driver" class="text-gray-500"> · 驱动 {{ t.environment.driver.type }} {{ t.environment.driver.minorVersion }}{{ t.environment.driver.majorVersion ? '–' + t.environment.driver.majorVersion : ' 及以上' }}</span></dd></div>
+          <div v-if="t.environment.basePackage?.relatedPodImageName" class="sm:col-span-2"><dt class="text-xs text-gray-500">镜像</dt><dd class="mono text-xs">{{ t.environment.basePackage.relatedPodImageName }}</dd></div>
           <div class="sm:col-span-2"><dt class="text-xs text-gray-500">占用资源</dt><dd>显存 {{ t.requirement.videoMemory }} MB · 内存 {{ t.requirement.memory }} MB · 磁盘 {{ t.requirement.disk }} MB · 智能内存 {{ t.requirement.AImemory }} MB · CPU {{ t.requirement.CPU }} 核</dd></div>
           <div class="sm:col-span-2"><dt class="text-xs text-gray-500">性能规格</dt>
             <dd class="mt-1 flex flex-wrap gap-1"><span v-for="(a, i) in t.abilityInfos" :key="i" class="chip">{{ a.type }} · {{ a.specification }} · 算力 {{ a.ability }}% · {{ a.taskAbility }} 路</span><span v-if="!t.abilityInfos.length" class="text-gray-400">未提供（尚未压测）</span></dd>
@@ -57,7 +65,7 @@ const supports = computed(() => [
       </section>
 
       <section class="card p-5">
-        <h2 class="section-title mb-3">支持的分析参数</h2>
+        <h2 class="section-title mb-3">支持的分析参数 <span class="text-xs font-normal text-gray-400">第二部分</span></h2>
         <div class="grid gap-1.5 text-sm sm:grid-cols-2">
           <p v-for="s in supports" :key="s.k" class="flex items-center gap-1.5" :class="s.on ? '' : 'text-gray-400'">
             <CircleCheck v-if="s.on" class="size-4 text-emerald-500" /><CircleX v-else class="size-4" />{{ s.k }}
@@ -69,7 +77,7 @@ const supports = computed(() => [
       </section>
 
       <section class="card p-5">
-        <h2 class="section-title mb-3">交付材料</h2>
+        <h2 class="section-title mb-3">交付材料 <span class="text-xs font-normal text-gray-400">第四部分</span></h2>
         <div class="divide-y divide-gray-100 text-sm dark:divide-gray-800">
           <div v-for="x in DELIVERIES" :key="x.key" class="flex items-center gap-2 py-2">
             <FileText class="size-4 shrink-0 text-gray-400" />

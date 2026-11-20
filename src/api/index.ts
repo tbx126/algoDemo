@@ -35,7 +35,7 @@ import { fakeSha, hashStr, rng } from '@/utils/format'
 // ---------- 原型数据持久化 ----------
 // 写操作（新建厂商、上传数据集、编辑信息等）保存到浏览器 localStorage，刷新后仍在。
 // 恢复时就地替换 mock 数组的内容，直接引用 mock 的组件（如头像、基准名称）也能看到最新数据。
-const STORE_KEY = 'algohub-db-v2'
+const STORE_KEY = 'algohub-db-v3'
 const SOURCES = { algorithms: A0, datasets: D0, benchmarks: B0, evals: E0, orgs: O0, users: U0 }
 type DbKey = keyof typeof SOURCES
 try {
