@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { BookOpen, Download, Pencil, Eye, EyeOff, FlaskConical, GitCommitVertical, Heart, Lock, Table2, Trash2, Trophy, Upload } from 'lucide-vue-next'
-import { ApiError, deleteDataset, getDataset, getRealDatasetPart, listBenchmarks, type RealDatasetRow } from '@/api'
+import { ApiError, REAL_DS_IDS, deleteDataset, getDataset, getRealDatasetPart, listBenchmarks, type RealDatasetRow } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { fmtBytes, fmtNum, timeAgo } from '@/utils/format'
@@ -66,17 +66,17 @@ const showAnn = ref(true)
 const count = ref(18)
 watch(partName, () => (count.value = 18))
 
-// 真实后端数据集分片（如 Admin/cat-dog-dataset）：直接读取真实 labels.csv 与真实图片
-const isRealDataset = computed(() => ds.value?.id === 'Admin/cat-dog-dataset')
+// 真实后端数据集分片（如 Admin/cat-dog-dataset、Admin/dehaze-dataset）：直接读取真实 labels.csv 与真实图片
+const isRealDataset = computed(() => REAL_DS_IDS.has(ds.value?.id ?? ''))
 const realRows = ref<RealDatasetRow[]>([])
 watch(
-  [isRealDataset, partName, locked],
-  async ([isReal, p, isLocked]) => {
-    if (!isReal || isLocked) {
+  [() => ds.value?.id, isRealDataset, partName, locked],
+  async ([dsId, isReal, p, isLocked]) => {
+    if (!dsId || !isReal || isLocked) {
       realRows.value = []
       return
     }
-    const res = await getRealDatasetPart(p, 500)
+    const res = await getRealDatasetPart(dsId, p, 500)
     realRows.value = res?.rows ?? []
   },
   { immediate: true },
@@ -85,7 +85,7 @@ watch(
 const seedOf = (i: number) => (ds.value?.previewSeed ?? 0) + offset.value + i
 const csvRows = computed(() => {
   if (isRealDataset.value && realRows.value.length) {
-    return realRows.value.slice(0, 12).map((r, i) => ({ idx: i + 1, row: [r.file_name, r.label] }))
+    return realRows.value.slice(0, 12).map((r, i) => ({ idx: i + 1, row: r.row ?? [r.file_name, r.label] }))
   }
   if (!ds.value || !part.value) return []
   const out: { idx: number; row: string[] }[] = []
@@ -99,7 +99,7 @@ const zoom = ref<number | null>(null)
 const zoomOpen = computed({ get: () => zoom.value !== null, set: (v) => !v && (zoom.value = null) })
 const zoomReal = computed(() => (isRealDataset.value && zoom.value !== null ? realRows.value[zoom.value - 1] ?? null : null))
 const zoomRows = computed(() => {
-  if (zoomReal.value) return [[zoomReal.value.file_name, zoomReal.value.label]]
+  if (zoomReal.value) return [zoomReal.value.row ?? [zoomReal.value.file_name, zoomReal.value.label]]
   return ds.value && part.value && zoom.value !== null ? rowsFor(seedOf(zoom.value), zoom.value, partName.value, ds.value.task, ds.value.classes, part.value.columns) : []
 })
 
@@ -108,7 +108,7 @@ function download(p: SplitName) {
     // 大体积真实数据集使用原生 <a> 流式下载，避免浏览器 JS 内存缓存数百 MB Blob
     const a = document.createElement('a')
     a.href = `/real-api/datasets/${ds.value!.id}/download/${p}`
-    a.download = `cat-dog-dataset-${p}-v1.0.zip`
+    a.download = `${ds.value!.name}-${p}-v1.0.zip`
     document.body.appendChild(a)
     a.click()
     a.remove()

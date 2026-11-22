@@ -125,12 +125,18 @@ function syncAlgoYaml(a: Pick<Algorithm, 'algoYaml' | 'task' | 'business' | 'fra
 // 用 reactive 包一层，使 mock “写操作” 能实时反映到页面上
 const db = reactive(SOURCES)
 
-// ---------- 真实后端同步（猫狗数据集、算法、随机基线与评测完全走 FastAPI + PyTorch） ----------
+// ---------- 真实后端同步（猫狗、图像去雾数据集/算法/评测与随机基线完全走 FastAPI + PyTorch） ----------
 const REAL_ALGO_ID = 'Admin/cat-dog-classifier'
+const REAL_DEHAZE_IDS = new Set(['Admin/dehaze-dcp', 'Admin/dehaze-aodnet', 'Admin/dehaze-ffanet', 'Admin/dehaze-deanet'])
 const REAL_RANDOM_ID = 'Admin/random'
-const REAL_ALGO_IDS = new Set([REAL_ALGO_ID, REAL_RANDOM_ID])
+const REAL_ALGO_IDS = new Set([REAL_ALGO_ID, ...REAL_DEHAZE_IDS, REAL_RANDOM_ID])
+const LEGACY_REAL_ALGO_IDS = new Set(['Admin/dehaze'])
 const REAL_DS_ID = 'Admin/cat-dog-dataset'
+const REAL_DEHAZE_DS_ID = 'Admin/dehaze-dataset'
+export const REAL_DS_IDS = new Set([REAL_DS_ID, REAL_DEHAZE_DS_ID])
 const REAL_BENCH_ID = 'cat-dog-cls-bench'
+const REAL_DEHAZE_BENCH_ID = 'dehaze-bench'
+const REAL_BENCH_IDS = new Set([REAL_BENCH_ID, REAL_DEHAZE_BENCH_ID])
 
 let realSynced = false
 let realSyncPromise: Promise<void> | null = null
@@ -140,7 +146,9 @@ function applyRealBootstrap(payload: {
   algorithm: Algorithm
   algorithms?: Algorithm[]
   dataset: Dataset
+  datasets?: Dataset[]
   benchmark: Benchmark
+  benchmarks?: Benchmark[]
   evals: EvalRun[]
   warmContainers?: QueueStatus['warmContainers']
 }) {
@@ -169,21 +177,30 @@ function applyRealBootstrap(payload: {
     }
   }
 
-  if (!db.deletedRealIds.includes(REAL_DS_ID)) {
-    const di = db.datasets.findIndex((d) => d.id === REAL_DS_ID)
-    if (di >= 0) db.datasets[di] = payload.dataset
-    else db.datasets.unshift(payload.dataset)
+  const incomingDs = payload.datasets?.length ? payload.datasets : [payload.dataset]
+  for (const ds of incomingDs) {
+    if (db.deletedRealIds.includes(ds.id)) continue
+    const di = db.datasets.findIndex((d) => d.id === ds.id)
+    if (di >= 0) db.datasets[di] = ds
+    else db.datasets.unshift(ds)
   }
 
-  if (!db.deletedRealIds.includes(REAL_DS_ID) && !db.deletedRealIds.includes(REAL_BENCH_ID)) {
-    const bi = db.benchmarks.findIndex((b) => b.id === REAL_BENCH_ID)
-    if (bi >= 0) db.benchmarks[bi] = payload.benchmark
-    else db.benchmarks.unshift(payload.benchmark)
+  const incomingBenches = payload.benchmarks?.length ? payload.benchmarks : [payload.benchmark]
+  for (const bench of incomingBenches) {
+    if (db.deletedRealIds.includes(bench.datasetId) || db.deletedRealIds.includes(bench.id)) continue
+    const bi = db.benchmarks.findIndex((b) => b.id === bench.id)
+    if (bi >= 0) db.benchmarks[bi] = bench
+    else db.benchmarks.unshift(bench)
+  }
+
+  // 清理已拆分的旧版合并算法缓存（如 Admin/dehaze）
+  for (let i = db.algorithms.length - 1; i >= 0; i--) {
+    if (LEGACY_REAL_ALGO_IDS.has(db.algorithms[i].id)) db.algorithms.splice(i, 1)
   }
 
   // 用真实后端评测记录替换真实算法的评测记录（跳过已被删除的算法/基准）
   for (let i = db.evals.length - 1; i >= 0; i--) {
-    if (REAL_ALGO_IDS.has(db.evals[i].algorithmId)) db.evals.splice(i, 1)
+    if (REAL_ALGO_IDS.has(db.evals[i].algorithmId) || LEGACY_REAL_ALGO_IDS.has(db.evals[i].algorithmId)) db.evals.splice(i, 1)
   }
   const activeEvals = payload.evals.filter((e) => !db.deletedRealIds.includes(e.algorithmId) && !db.deletedRealIds.includes(e.benchmarkId))
   db.evals.unshift(...activeEvals)
@@ -213,11 +230,16 @@ export interface RealDatasetRow {
   file_name: string
   label: string
   url: string
+  row?: string[]
 }
 
-export async function getRealDatasetPart(part: SplitName, limit = 200): Promise<{ part: SplitName; columns: string[]; total: number; rows: RealDatasetRow[] } | null> {
+export async function getRealDatasetPart(
+  datasetId: string,
+  part: SplitName,
+  limit = 200,
+): Promise<{ part: SplitName; columns: string[]; total: number; rows: RealDatasetRow[] } | null> {
   try {
-    const resp = await fetch(`/real-api/datasets/${REAL_DS_ID}/part/${part}?limit=${limit}`)
+    const resp = await fetch(`/real-api/datasets/${datasetId}/part/${part}?limit=${limit}`)
     if (!resp.ok) return null
     return await resp.json()
   } catch {
@@ -391,7 +413,7 @@ export async function listDatasets(q: ListQuery = {}): Promise<Paginated<Dataset
 }
 
 export async function getDataset(id: string): Promise<Dataset> {
-  await syncRealBackend(id === REAL_DS_ID)
+  await syncRealBackend(REAL_DS_IDS.has(id))
   await delay()
   const d = db.datasets.find((x) => x.id === id)
   if (!d) throw new ApiError(404, '数据集不存在')
@@ -477,7 +499,7 @@ export async function listBenchmarks(q: { task?: TaskType | ''; q?: string } = {
 }
 
 export async function getBenchmark(id: string): Promise<Benchmark> {
-  await syncRealBackend(id === REAL_BENCH_ID)
+  await syncRealBackend(REAL_BENCH_IDS.has(id))
   await delay()
   const b = db.benchmarks.find((x) => x.id === id)
   if (!b) throw new ApiError(404, 'Benchmark 不存在')
@@ -501,7 +523,7 @@ export interface LeaderboardRow {
 // GET /api/benchmarks/{id}/leaderboard —— 每个“算法版本”只取最新有效结果；
 // 名次按全部上榜结果计算，厂商账号只返回自己的行（看得到自己的名次，看不到其他厂商）
 export async function getLeaderboard(benchId: string): Promise<LeaderboardRow[]> {
-  await syncRealBackend(benchId === REAL_BENCH_ID)
+  await syncRealBackend(REAL_BENCH_IDS.has(benchId))
   await delay()
   const b = db.benchmarks.find((x) => x.id === benchId)!
   const primary = b.metrics.find((m) => m.primary)!
@@ -537,7 +559,7 @@ export async function listEvals(f: { algorithmId?: string; benchmarkId?: string;
 }
 
 export async function getEval(id: string): Promise<EvalRun> {
-  if (id.startsWith('ev-real-')) {
+  if (id.startsWith('ev-real-') || id.startsWith('ev-dehaze-')) {
     await syncRealBackend()
     const resp = await fetch(`/real-api/evals/${encodeURIComponent(id)}`)
     if (resp.ok) {
@@ -568,8 +590,11 @@ export async function createEval(input: { algorithmId: string; algoVersion: stri
   const b = db.benchmarks.find((x) => x.id === input.benchmarkId)!
   if (input.algorithmId !== REAL_RANDOM_ID && a.task !== b.task) throw new ApiError(400, '算法任务类型与 Benchmark 不匹配')
 
-  // 猫狗算法 / 随机基线 × 猫狗基准：走真实后端评测
-  if (REAL_ALGO_IDS.has(input.algorithmId) && input.benchmarkId === REAL_BENCH_ID) {
+  // 猫狗算法 / 随机基线 × 猫狗基准，或各去雾路线算法 × 去雾基准：走真实后端评测
+  if (
+    (input.benchmarkId === REAL_BENCH_ID && (input.algorithmId === REAL_ALGO_ID || input.algorithmId === REAL_RANDOM_ID)) ||
+    (input.benchmarkId === REAL_DEHAZE_BENCH_ID && REAL_DEHAZE_IDS.has(input.algorithmId))
+  ) {
     const resp = await fetch('/real-api/evals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -675,8 +700,8 @@ export async function infer(algorithmId: string, version: string, input: { dataU
     if (!resp.ok) throw new ApiError(resp.status, '随机推理服务调用失败')
     return await resp.json()
   }
-  // 猫狗算法：走真实 PyTorch 后端推理
-  if (algorithmId === REAL_ALGO_ID) {
+  // 猫狗算法 / 图像去雾各路线算法：走真实 PyTorch/NumPy 后端推理
+  if (algorithmId === REAL_ALGO_ID || REAL_DEHAZE_IDS.has(algorithmId)) {
     const fd = new FormData()
     fd.append('version', version)
     if (input.file) {
@@ -687,7 +712,7 @@ export async function infer(algorithmId: string, version: string, input: { dataU
       const blob = await (await fetch(input.dataUrl)).blob()
       fd.append('file', blob, input.fileName)
     }
-    const resp = await fetch(`/real-api/algorithms/${REAL_ALGO_ID}/infer`, { method: 'POST', body: fd })
+    const resp = await fetch(`/real-api/algorithms/${algorithmId}/infer`, { method: 'POST', body: fd })
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ detail: '真实推理服务调用失败' }))
       throw new ApiError(resp.status, err.detail || '真实推理服务调用失败')
@@ -1060,7 +1085,7 @@ export async function deleteDataset(id: string): Promise<void> {
   for (let i = db.evals.length - 1; i >= 0; i--) {
     if (removedBenches.has(db.evals[i].benchmarkId)) db.evals.splice(i, 1)
   }
-  if (id === REAL_DS_ID && !db.deletedRealIds.includes(id)) db.deletedRealIds.push(id)
+  if (REAL_DS_IDS.has(id) && !db.deletedRealIds.includes(id)) db.deletedRealIds.push(id)
 }
 
 // PATCH /api/datasets/{id}

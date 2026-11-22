@@ -46,6 +46,32 @@ export const evaluators: Evaluator[] = [
     updatedBy: 'admin',
   },
   {
+    id: 'dehaze-psnr-ssim-evaluator',
+    name: '图像去雾 PSNR/SSIM 评测器',
+    version: 'v1.0.0',
+    kind: 'builtin',
+    task: 'image-dehazing',
+    status: 'ready',
+    description: '面向图像去雾配对数据集（有雾图 + 清晰真值图），逐张执行真实去雾前向推理并计算峰值信噪比（PSNR）与结构相似度（SSIM），支持按轻/中/浓雾浓度拆分。',
+    entrypoint: 'backend/dehaze_registry.py:evaluate_dehaze_on_test',
+    runtime: 'Python 3.12 · PyTorch 2.6+cu124 · NumPy',
+    supportedMetrics: [
+      { key: 'psnr', label: 'PSNR', higherIsBetter: true, unit: 'dB', primary: true },
+      { key: 'ssim', label: 'SSIM', higherIsBetter: true, unit: '' },
+    ],
+    config: [
+      { key: 'tile_size', label: '滑窗分块尺寸（0 表示整图）', type: 'number', value: 0, desc: '大图显存不足时可按 tile 滑窗推理' },
+      { key: 'amp_fp16', label: '开启混合精度（AMP）', type: 'boolean', value: true, desc: '深度学习模型在 GPU 上启用 FP16 推理' },
+    ],
+    script: `def evaluate_pair(pred: np.ndarray, gt: np.ndarray):
+    mse = float(np.mean((pred - gt) ** 2))
+    psnr = 50.0 if mse <= 1e-12 else 10.0 * math.log10(1.0 / mse)
+    ssim = compute_ssim(pred, gt)  # 11x11 滑动窗口 RGB 平均
+    return {"psnr": round(psnr, 2), "ssim": round(ssim, 4)}`,
+    updatedAt: '2026-11-20T10:10:00+08:00',
+    updatedBy: 'admin',
+  },
+  {
     id: 'builtin-coco-detection',
     name: '目标检测 COCO 评测器',
     version: 'v2.0.1',

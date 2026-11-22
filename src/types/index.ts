@@ -2,6 +2,7 @@
 
 export type TaskType =
   | 'image-classification'
+  | 'image-dehazing'
   | 'object-detection'
   | 'semantic-segmentation'
   | 'instance-segmentation'
@@ -245,8 +246,8 @@ export interface Dataset {
   sampleImages?: Record<string, string[]>
   /** 可选：由真实后端提供的真实预览样本（含真实文件名、标签与图片 URL） */
   realPreview?: {
-    train: { file_name: string; label: string; url: string }[]
-    test: { file_name: string; label: string; url: string }[]
+    train: { file_name: string; label: string; url: string; row?: string[] }[]
+    test: { file_name: string; label: string; url: string; row?: string[] }[]
   }
 }
 
@@ -355,6 +356,7 @@ export interface InferenceResult {
   classification?: ClsItem[]
   detections?: DetBox[]
   segments?: SegRegion[]
+  outputImage?: string
   raw: unknown
 }
 

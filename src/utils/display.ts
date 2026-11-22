@@ -5,6 +5,10 @@ import type { Algorithm } from '@/types'
 /** 算法英文标识到中文名称的映射（兼容真实后端与历史数据） */
 const ALGO_ZH_MAP: Record<string, string> = {
   'cat-dog-classifier': '猫狗图像识别',
+  'dehaze-dcp': '暗通道先验去雾（DCP）',
+  'dehaze-aodnet': '轻量物理网络去雾（AOD-Net）',
+  'dehaze-ffanet': '特征融合注意力去雾（FFA-Net）',
+  'dehaze-deanet': '细节增强注意力去雾（DEA-Net）',
   random: '随机基线',
   LEDmeter: '红色LED数显识别',
   lightningmetermechnicalcount: '避雷器电流表与放电计数识别',

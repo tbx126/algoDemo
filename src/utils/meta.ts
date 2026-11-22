@@ -2,6 +2,7 @@ import type { AlgoVersionStatus, BusinessCategory, EvalStatus, EvaluatorStatus, 
 
 export const TASKS: Record<TaskType, { label: string; group: '视觉与识别' | '预测与优化' | '其他'; color: string }> = {
   'image-classification': { label: '图像识别', group: '视觉与识别', color: 'text-sky-600 dark:text-sky-400' },
+  'image-dehazing': { label: '图像去雾', group: '视觉与识别', color: 'text-cyan-600 dark:text-cyan-400' },
   'object-detection': { label: '目标检测', group: '视觉与识别', color: 'text-amber-600 dark:text-amber-400' },
   'semantic-segmentation': { label: '语义分割', group: '视觉与识别', color: 'text-emerald-600 dark:text-emerald-400' },
   'instance-segmentation': { label: '实例分割', group: '视觉与识别', color: 'text-teal-600 dark:text-teal-400' },

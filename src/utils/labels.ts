@@ -23,6 +23,8 @@ export function labelSpec(task: TaskType): LabelSpec {
   switch (task) {
     case 'image-classification':
       return { required: ['file_name', 'label'], optional: CONDITION_COLUMNS, perObject: false, desc: '一张图一行，label 为类别名', dataExt: 'jpg' }
+    case 'image-dehazing':
+      return { required: ['file_name', 'clear_file'], optional: ['beta', 'airlight'], perObject: false, desc: '一张有雾图一行，clear_file 指向对应的清晰真值图', dataExt: 'jpg' }
     case 'object-detection':
     case 'keypoint-detection':
     case 'ocr':

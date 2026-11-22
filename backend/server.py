@@ -35,9 +35,18 @@ from model_registry import (
     infer_random,
     warm_containers,
 )
+from dehaze_registry import (
+    DEHAZE_ALGOS,
+    DEHAZE_DATA_DIR,
+    DEHAZE_MODELS_DIR,
+    DEHAZE_STATE_PATH,
+    evaluate_dehaze_on_test,
+    infer_dehaze_bytes,
+)
 
 STATE_FILE = ROOT / "state" / "real_state.json"
 META_FILE = DATA_DIR / "meta.json"
+DEHAZE_META_FILE = DEHAZE_DATA_DIR / "meta.json"
 TZ_CN = timezone(timedelta(hours=8))
 
 app = FastAPI(title="AlgoHub Real Backend", version="0.1.0")
@@ -373,19 +382,261 @@ resources:
     }
 
 
+def load_dehaze_state() -> dict | None:
+    if not DEHAZE_STATE_PATH.exists():
+        return None
+    return json.loads(DEHAZE_STATE_PATH.read_text(encoding="utf-8"))
+
+
+def save_dehaze_state(state: dict) -> None:
+    DEHAZE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DEHAZE_STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_dehaze_meta() -> dict | None:
+    if not DEHAZE_META_FILE.exists():
+        return None
+    return json.loads(DEHAZE_META_FILE.read_text(encoding="utf-8"))
+
+
+def read_dehaze_part_rows(part: Literal["train", "test"], limit: int | None = None) -> list[dict]:
+    csv_path = DEHAZE_DATA_DIR / part / "labels.csv"
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail=f"去雾数据集 {part} 不存在")
+    rows: list[dict] = []
+    with csv_path.open("r", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            fn = row["file_name"]
+            short = fn.split("/")[-1]
+            beta = float(row.get("beta", 1.5))
+            fog_level = "轻雾" if beta < 1.35 else ("中雾" if beta < 1.75 else "浓雾")
+            rows.append({
+                "file_name": fn,
+                "label": f"{fog_level} (β={row.get('beta', '-')}, A={row.get('airlight', '-')})",
+                "url": f"/real-api/datasets/Admin/dehaze-dataset/files/{part}/{short}",
+                "row": [fn, row["clear_file"], row.get("beta", ""), row.get("airlight", "")],
+            })
+            if limit is not None and len(rows) >= limit:
+                break
+    return rows
+
+
+def build_dehaze_algorithms(dstate: dict, dmeta: dict | None = None) -> list[dict]:
+    algo_versions_map = dstate.get("algorithms", {})
+    all_evals = dstate.get("evals", [])
+    test_rows = read_dehaze_part_rows("test", limit=12)
+    ver_tag = (dmeta or {}).get("test", {}).get("contentHash", "")[7:15]
+    suffix = f"?v={ver_tag}" if ver_tag else ""
+    sample_images = [f"{r['url']}{suffix}" for r in test_rows[:3]]
+
+    results: list[dict] = []
+    for algo_id, spec in DEHAZE_ALGOS.items():
+        versions = algo_versions_map.get(algo_id, [])
+        if not versions:
+            continue
+        evals = [e for e in all_evals if e["algorithmId"] == algo_id and e["status"] == "succeeded"]
+
+        files = [
+            {"path": "backend/dehaze_registry.py", "size": (ROOT / "dehaze_registry.py").stat().st_size, "kind": "code"},
+            {"path": "backend/train_dehaze.py", "size": (ROOT / "train_dehaze.py").stat().st_size, "kind": "code"},
+        ]
+        if spec.weight_file:
+            wf = DEHAZE_MODELS_DIR / spec.weight_file
+            files.append({
+                "path": f"weights/dehaze/{spec.weight_file}",
+                "size": wf.stat().st_size if wf.exists() else versions[0]["weightsSize"],
+                "kind": "weights",
+            })
+
+        hw_desc = "纯 CPU（NumPy + 积分图导向滤波，0 GB 显存）" if spec.arch == "dcp" else f"{hardware_label()}（声明显存 {spec.gpu_mem} GB）"
+        weight_line = f"  v1.0.0: weights/dehaze/{spec.weight_file}" if spec.weight_file else "  v1.0.0: none (CPU physical prior)"
+        readme = f"""# {spec.display_name}（{algo_id}）
+
+{spec.summary}
+
+## 算法与论文信息
+
+- **技术路线**：{spec.title}
+- **代表论文**：{spec.paper}
+- **推理框架**：{spec.framework}
+- **运行设备**：{hw_desc}
+- **训练集 / 评测基准**：`Admin/dehaze-dataset@v1.0` / `dehaze-bench`（PSNR & SSIM）
+
+## 在线推理接口
+
+- 路由：`POST /real-api/algorithms/{algo_id}/infer`（`multipart/form-data`）
+- 参数：`version`（`v1.0.0`）、`file`（JPG / PNG 雾天图片）
+- 返回：真实去雾后图像（`outputImage` Base64 Data URL）、耗时与设备信息
+"""
+
+        results.append({
+            "id": algo_id,
+            "org": "Admin",
+            "name": spec.name,
+            "displayName": spec.display_name,
+            "task": "image-dehazing",
+            "business": "other",
+            "framework": spec.framework,
+            "tags": list(spec.tags),
+            "summary": spec.summary,
+            "readme": readme,
+            "likes": 12 if spec.arch == "deanet" else (9 if spec.arch == "ffanet" else 7),
+            "evalCount": len(evals),
+            "updatedAt": spec.created_at,
+            "versions": versions,
+            "files": files,
+            "algoYaml": f"""name: {spec.name}
+version: {spec.version}
+task: image-dehazing
+business: other
+framework: {spec.framework}
+entry: backend/dehaze_registry.py:{spec.arch}
+versions:
+{weight_line}
+""",
+            "labels": ["轻雾", "中雾", "浓雾"],
+            "sampleImages": sample_images,
+        })
+    return results
+
+
+def build_dehaze_dataset(dmeta: dict) -> dict:
+    tr = dmeta["train"]
+    te = dmeta["test"]
+    train_rows = read_dehaze_part_rows("train", limit=6)
+    test_rows = read_dehaze_part_rows("test", limit=6)
+
+    readme = f"""# dehaze-dataset（真实场景配对图像去雾数据集）
+
+基于真实自然与城市摄影图像（Pillow 完整性校验 + SHA-256 去重，训练/测试零重叠），按 RESIDE 标准大气散射物理模型：
+
+$$I(x) = J(x) e^{{-\\beta d(x)}} + A \\left(1 - e^{{-\\beta d(x)}}\\right)$$
+
+结合平滑空间景深场 $d(x, y)$ 生成多浓度（轻雾 / 中雾 / 浓雾）有雾-清晰配对图。
+
+## 组成
+
+| 部分 | 配对数 | 大小 | 说明 |
+| --- | --- | --- | --- |
+| 训练集 | {tr["files"]} 对 | {tr["sizeBytes"] / (1024 * 1024):.2f} MB | 所有账号可在线浏览与真实打包下载 |
+| 测试集 | {te["files"]} 对 | {te["sizeBytes"] / (1024 * 1024):.2f} MB | **仅管理员可查看与下载**，用于 PSNR/SSIM 真实评测 |
+
+## labels.csv
+
+```
+file_name,clear_file,beta,airlight
+```
+"""
+
+    return {
+        "id": "Admin/dehaze-dataset",
+        "org": "Admin",
+        "name": "dehaze-dataset",
+        "task": "image-dehazing",
+        "tags": ["图像去雾", "配对数据集", "PSNR/SSIM", "真实数据集"],
+        "summary": f"真实配对图像去雾数据集（训练集 {tr['files']} 对 + 测试集 {te['files']} 对，384×256 RGB），含大气散射系数 β 与大气光 A 标注，支持实时预览与 ZIP 下载。",
+        "readme": readme,
+        "classes": ["轻雾", "中雾", "浓雾"],
+        "train": {
+            "name": "train",
+            "columns": ["file_name", "clear_file", "beta", "airlight"],
+            "versions": [
+                {
+                    "version": "v1.0",
+                    "createdAt": "2026-11-20T10:00:00+08:00",
+                    "createdBy": "admin",
+                    "contentHash": tr["contentHash"],
+                    "sizeBytes": tr["sizeBytes"],
+                    "note": f"真实配对图像去雾训练集（{tr['files']} 对有雾/清晰图）",
+                    "files": tr["files"],
+                    "rows": tr["rows"],
+                }
+            ],
+            "classCounts": tr.get("classCounts", {}),
+        },
+        "test": {
+            "name": "test",
+            "columns": ["file_name", "clear_file", "beta", "airlight"],
+            "versions": [
+                {
+                    "version": "v1.0",
+                    "createdAt": "2026-11-20T10:05:00+08:00",
+                    "createdBy": "admin",
+                    "contentHash": te["contentHash"],
+                    "sizeBytes": te["sizeBytes"],
+                    "note": f"真实配对图像去雾测试集（{te['files']} 对有雾/清晰图，与训练集零重叠）",
+                    "files": te["files"],
+                    "rows": te["rows"],
+                }
+            ],
+            "classCounts": te.get("classCounts", {}),
+        },
+        "likes": 9,
+        "downloads": 18,
+        "updatedAt": "2026-11-20T10:05:00+08:00",
+        "previewSeed": 2000,
+        "realPreview": {
+            "train": train_rows[:6],
+            "test": test_rows[:6],
+        },
+    }
+
+
+def build_dehaze_benchmark(dmeta: dict) -> dict:
+    te = dmeta["test"]
+    return {
+        "id": "dehaze-bench",
+        "name": "dehaze-bench",
+        "displayName": "图像去雾标准评测基准（PSNR / SSIM）",
+        "description": f"基于真实配对数据集 Admin/dehaze-dataset 测试集 v1.0（{te['files']} 对轻/中/浓雾真实场景图），逐张执行真实去雾推理并计算峰值信噪比（PSNR）与结构相似度（SSIM）。",
+        "task": "image-dehazing",
+        "datasetId": "Admin/dehaze-dataset",
+        "datasetVersion": "v1.0",
+        "split": "test",
+        "evaluator": "dehaze-psnr-ssim-evaluator",
+        "evaluatorVersion": "v1.0.0",
+        "metrics": [
+            {"key": "psnr", "label": "PSNR", "higherIsBetter": True, "unit": "dB", "primary": True},
+            {"key": "ssim", "label": "SSIM", "higherIsBetter": True, "unit": ""},
+        ],
+        "createdAt": "2026-11-20T10:10:00+08:00",
+        "org": "Admin",
+    }
+
+
 @app.get("/real-api/bootstrap")
 def bootstrap():
     with _STATE_LOCK:
         state = load_state()
+        dstate = load_dehaze_state()
     meta = load_dataset_meta()
+    dmeta = load_dehaze_meta()
     cat_dog = build_real_algorithm(state)
     rand_algo = build_random_algorithm(state)
+    cat_dog_ds = build_real_dataset(meta)
+    cat_dog_bench = build_real_benchmark(meta)
+
+    algorithms = [cat_dog]
+    datasets = [cat_dog_ds]
+    benchmarks = [cat_dog_bench]
+    evals = list(state["evals"])
+
+    if dstate and dmeta:
+        algorithms.extend(build_dehaze_algorithms(dstate, dmeta))
+        datasets.append(build_dehaze_dataset(dmeta))
+        benchmarks.append(build_dehaze_benchmark(dmeta))
+        evals.extend(dstate["evals"])
+
+    algorithms.append(rand_algo)
+
     return {
         "algorithm": cat_dog,
-        "algorithms": [cat_dog, rand_algo],
-        "dataset": build_real_dataset(meta),
-        "benchmark": build_real_benchmark(meta),
-        "evals": state["evals"],
+        "algorithms": algorithms,
+        "dataset": cat_dog_ds,
+        "datasets": datasets,
+        "benchmark": cat_dog_bench,
+        "benchmarks": benchmarks,
+        "evals": evals,
         "warmContainers": warm_containers(),
     }
 
@@ -434,6 +685,63 @@ def download_dataset_part(part: Literal["train", "test"]):
     )
 
 
+@app.get("/real-api/datasets/Admin/dehaze-dataset/part/{part}")
+def get_dehaze_dataset_part(part: Literal["train", "test"], limit: int = 200):
+    dmeta = load_dehaze_meta()
+    if not dmeta:
+        raise HTTPException(status_code=503, detail="去雾数据集尚未初始化")
+    rows = read_dehaze_part_rows(part, limit=max(1, min(limit, 500)))
+    return {
+        "part": part,
+        "columns": ["file_name", "clear_file", "beta", "airlight"],
+        "total": dmeta[part]["files"],
+        "rows": rows,
+    }
+
+
+@app.get("/real-api/datasets/Admin/dehaze-dataset/files/{part}/{filename}")
+def get_dehaze_dataset_file(part: Literal["train", "test"], filename: str):
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="非法文件名")
+    path = DEHAZE_DATA_DIR / part / "images" / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="图片不存在")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/real-api/datasets/Admin/dehaze-dataset/clear/{part}/{filename}")
+def get_dehaze_clear_file(part: Literal["train", "test"], filename: str):
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="非法文件名")
+    path = DEHAZE_DATA_DIR / part / "clear" / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="清晰真值图不存在")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/real-api/datasets/Admin/dehaze-dataset/download/{part}")
+def download_dehaze_dataset_part(part: Literal["train", "test"]):
+    part_dir = DEHAZE_DATA_DIR / part
+    if not part_dir.exists():
+        raise HTTPException(status_code=404, detail="去雾数据集分片不存在")
+    zip_path = DEHAZE_DATA_DIR / f"dehaze-dataset-{part}-v1.0.zip"
+    if not zip_path.exists():
+        tmp = zip_path.with_suffix(".zip.tmp")
+        with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_STORED) as zf:
+            csv_path = part_dir / "labels.csv"
+            if csv_path.exists():
+                zf.write(csv_path, arcname=f"{part}/labels.csv")
+            for sub in ("images", "clear"):
+                for img in sorted((part_dir / sub).glob("*.jpg")):
+                    zf.write(img, arcname=f"{part}/{sub}/{img.name}")
+        tmp.replace(zip_path)
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"dehaze-dataset-{part}-v1.0.zip",
+    )
+
+
 @app.post("/real-api/algorithms/Admin/random/infer")
 async def infer_random_endpoint(
     task: str = Form("image-classification"),
@@ -470,6 +778,37 @@ async def infer_cat_dog(
         return infer_image_bytes(version, raw)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"推理失败：{exc}")
+
+
+@app.post("/real-api/algorithms/Admin/{algo_name}/infer")
+async def infer_dehaze_algo(
+    algo_name: str,
+    version: str = Form("v1.0.0"),
+    file: UploadFile | None = File(None),
+    sample_path: str | None = Form(None),
+):
+    algo_id = f"Admin/{algo_name}"
+    if algo_id not in DEHAZE_ALGOS:
+        raise HTTPException(status_code=404, detail=f"不支持的去雾算法：{algo_id}")
+    if file is not None:
+        raw = await file.read()
+    elif sample_path:
+        clean_path = sample_path.split("?", 1)[0]
+        parts = clean_path.strip("/").split("/")
+        if len(parts) >= 2 and parts[-2] in ("train", "test"):
+            p = DEHAZE_DATA_DIR / parts[-2] / "images" / parts[-1]
+            if not p.exists():
+                raise HTTPException(status_code=404, detail="示例雾图不存在")
+            raw = p.read_bytes()
+        else:
+            raise HTTPException(status_code=400, detail="无效的示例图片路径")
+    else:
+        raise HTTPException(status_code=400, detail="请上传有雾图片或选择示例图片")
+
+    try:
+        return infer_dehaze_bytes(algo_id, raw)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"去雾推理失败：{exc}")
 
 
 class EvalRequest(BaseModel):
@@ -545,10 +884,114 @@ def _run_eval_bg(eval_id: str, algorithm_id: str, version: str):
                 save_state(st)
 
 
+def _run_dehaze_eval_bg(eval_id: str, algo_id: str):
+    def on_progress(pct: int, msg: str | None):
+        with _STATE_LOCK:
+            st = load_dehaze_state()
+            if not st:
+                return
+            run = next((r for r in st["evals"] if r["id"] == eval_id), None)
+            if not run:
+                return
+            run["progress"] = pct
+            if msg:
+                run["logs"].append(msg)
+            save_dehaze_state(st)
+
+    try:
+        spec = DEHAZE_ALGOS[algo_id]
+        with _STATE_LOCK:
+            st = load_dehaze_state()
+            if st:
+                run = next((r for r in st["evals"] if r["id"] == eval_id), None)
+                if run:
+                    run["status"] = "running"
+                    run["startedAt"] = iso_now()
+                    hw = "CPU (NumPy + Pillow)" if spec.arch == "dcp" else hardware_label()
+                    run["logs"].append(f"[scheduler] 开始在 {hw} 上执行真实去雾评测（{spec.title}）")
+                    save_dehaze_state(st)
+
+        res = evaluate_dehaze_on_test(algo_id, on_progress=on_progress)
+
+        with _STATE_LOCK:
+            st = load_dehaze_state()
+            if st:
+                run = next((r for r in st["evals"] if r["id"] == eval_id), None)
+                if run:
+                    for other in st["evals"]:
+                        if (
+                            other["id"] != eval_id
+                            and other["algorithmId"] == run["algorithmId"]
+                            and other["algoVersion"] == run["algoVersion"]
+                            and other["benchmarkId"] == run["benchmarkId"]
+                        ):
+                            other["isLatestValid"] = False
+                    run["status"] = "succeeded"
+                    run["progress"] = 100
+                    run["finishedAt"] = iso_now()
+                    run["metrics"] = res["metrics"]
+                    run["durationSec"] = res["durationSec"]
+                    run["peakGpuMemGB"] = res["peakGpuMemGB"]
+                    run["latencyMs"] = res["latencyMs"]
+                    run["isLatestValid"] = True
+                    run["perClass"] = res["perClass"]
+                    run["errorSamples"] = res["errorSamples"]
+                    run["logs"].append(
+                        f"[done] 真实评测完成：PSNR={res['metrics']['psnr']:.2f} dB，SSIM={res['metrics']['ssim']:.4f}，平均单图 {res['latencyMs']} ms，已更新排行榜"
+                    )
+                    save_dehaze_state(st)
+    except Exception as exc:
+        with _STATE_LOCK:
+            st = load_dehaze_state()
+            if st:
+                run = next((r for r in st["evals"] if r["id"] == eval_id), None)
+                if run:
+                    run["status"] = "failed"
+                    run["finishedAt"] = iso_now()
+                    run["error"] = str(exc)
+                    run["logs"].append(f"[error] 评测失败：{exc}")
+                    save_dehaze_state(st)
+
+
 @app.post("/real-api/evals")
 def trigger_real_eval(req: EvalRequest):
+    if req.algorithmId in DEHAZE_ALGOS and req.benchmarkId == "dehaze-bench":
+        with _STATE_LOCK:
+            dst = load_dehaze_state()
+            if not dst:
+                raise HTTPException(status_code=503, detail="去雾模型尚未初始化")
+            versions = dst.get("algorithms", {}).get(req.algorithmId, [])
+            vrec = next((v for v in versions if v["version"] == req.algoVersion), None)
+            if not vrec:
+                raise HTTPException(status_code=404, detail="版本不存在")
+            spec = DEHAZE_ALGOS[req.algorithmId]
+            eval_id = f"ev-dehaze-{1001 + len(dst['evals'])}"
+            now = iso_now()
+            run = {
+                "id": eval_id,
+                "algorithmId": req.algorithmId,
+                "algoVersion": req.algoVersion,
+                "benchmarkId": req.benchmarkId,
+                "status": "queued",
+                "progress": 0,
+                "submittedBy": req.submittedBy,
+                "submittedAt": now,
+                "metrics": {},
+                "imageDigest": vrec["imageDigest"],
+                "weightsHash": vrec["weightsHash"],
+                "evaluatorVersion": "v1.0.0",
+                "params": {"tile_size": 0, "amp_fp16": spec.arch != "dcp"},
+                "hardware": "CPU (NumPy + Pillow)" if spec.arch == "dcp" else hardware_label(),
+                "isLatestValid": False,
+                "logs": [f"[scheduler] 真实去雾评测任务 {eval_id} 已入队，目标 {req.algorithmId} {req.algoVersion}（{spec.title}）"],
+            }
+            dst["evals"].insert(0, run)
+            save_dehaze_state(dst)
+        threading.Thread(target=_run_dehaze_eval_bg, args=(eval_id, req.algorithmId), daemon=True).start()
+        return run
+
     if req.algorithmId not in ("Admin/cat-dog-classifier", "Admin/random") or req.benchmarkId != "cat-dog-cls-bench":
-        raise HTTPException(status_code=400, detail="当前真实评测仅支持 Admin/cat-dog-classifier 或 Admin/random × cat-dog-cls-bench")
+        raise HTTPException(status_code=400, detail="当前真实评测仅支持 cat-dog-cls-bench 或 dehaze-bench")
 
     with _STATE_LOCK:
         st = load_state()
@@ -598,14 +1041,21 @@ def trigger_real_eval(req: EvalRequest):
 @app.get("/real-api/evals")
 def list_real_evals():
     with _STATE_LOCK:
-        return load_state()["evals"]
+        evals = list(load_state()["evals"])
+        dst = load_dehaze_state()
+        if dst:
+            evals.extend(dst["evals"])
+        return evals
 
 
 @app.get("/real-api/evals/{eval_id}")
 def get_real_eval(eval_id: str):
     with _STATE_LOCK:
         st = load_state()
+        dst = load_dehaze_state()
     run = next((r for r in st["evals"] if r["id"] == eval_id), None)
+    if not run and dst:
+        run = next((r for r in dst["evals"] if r["id"] == eval_id), None)
     if not run:
         raise HTTPException(status_code=404, detail="评测记录不存在")
     return run

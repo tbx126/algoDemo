@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { Braces, Cpu, ImageUp, LoaderCircle, Lock, Play, RotateCcw, Zap } from 'lucide-vue-next'
+import { Braces, Cpu, Download, ImageUp, LoaderCircle, Lock, Play, RotateCcw, Zap } from 'lucide-vue-next'
 import type { Algorithm, InferenceResult, TaskType } from '@/types'
 import { infer } from '@/api'
 import { useSession } from '@/stores/session'
@@ -226,6 +226,19 @@ const accept = computed(() => (isImageTask.value ? 'image/*' : props.algo.task =
           <span>推理 {{ result.latencyMs }} ms</span>
           <span v-if="result.queuedMs">冷启动 {{ (result.queuedMs / 1000).toFixed(1) }} s</span>
           <span v-else class="text-emerald-600">容器已预热</span>
+        </div>
+
+        <!-- 图像去雾 / 图像增强结果 -->
+        <div v-if="result.outputImage" class="space-y-2">
+          <div class="flex items-center justify-between text-xs text-gray-500">
+            <span class="font-medium text-gray-700 dark:text-gray-200">去雾后效果（{{ version }}）</span>
+            <a :href="result.outputImage" :download="`dehazed_${version}_${input?.fileName || 'output.jpg'}`" class="inline-flex items-center gap-1 text-brand-600 hover:underline dark:text-brand-400">
+              <Download class="size-3.5" />下载结果图
+            </a>
+          </div>
+          <div class="overflow-hidden rounded-lg border border-gray-200 bg-gray-100 dark:border-gray-700 dark:bg-gray-800">
+            <img :src="result.outputImage" alt="去雾结果" class="block h-auto w-full" />
+          </div>
         </div>
 
         <!-- 分类结果 -->
