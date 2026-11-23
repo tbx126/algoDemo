@@ -3,12 +3,12 @@ import { ref } from 'vue'
 import { CircleCheck, Paperclip, X } from 'lucide-vue-next'
 import { fmtBytes } from '@/utils/format'
 
-/** 紧凑的单文件选择（模拟上传，只记录文件名与大小） */
+/** 紧凑的单文件选择（保留原始 File 对象供真实后端上传） */
 withDefaults(defineProps<{ accept?: string; label?: string; invalid?: boolean }>(), { label: '上传文件' })
-const model = defineModel<{ name: string; size: number } | null>({ default: null })
+const model = defineModel<{ name: string; size: number; file?: File } | null>({ default: null })
 const el = ref<HTMLInputElement>()
 function pick(f?: File) {
-  if (f) model.value = { name: f.name, size: f.size }
+  if (f) model.value = { name: f.name, size: f.size, file: f }
 }
 </script>
 

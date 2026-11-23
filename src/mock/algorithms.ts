@@ -331,7 +331,7 @@ const CAT_DOG_ALGO: Algorithm = {
   task: 'image-classification',
   business: 'security',
   framework: 'PyTorch',
-  tags: ['猫狗识别', '图像分类', '基线算法', '安防周界'],
+  tags: ['真实部署', '基线算法'],
   summary: '猫狗二分类图像识别算法，用于周界安防小动物误报过滤与宠物识别，提供 MobileNetV3 / ResNet-50+SE / ConvNeXt-Tiny 三个演进版本。',
   readme: `# 猫狗图像识别（cat-dog-classifier）
 
@@ -474,7 +474,7 @@ export const algorithms: Algorithm[] = [
     task: s.task,
     business: 'inspection' as const,
     framework: 'PyTorch' as const,
-    tags: ['新能源场站', '可见光巡检', s.shortName],
+    tags: ['新能源场站', '可见光巡检', s.task === 'ocr' ? '表计读数' : '状态识别'],
     summary: `${s.fullName}：${s.method}，输出${s.output}。`,
     readme: readme(s),
     likes: 0,

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { CircleAlert, CircleCheck, CircleX, Database, FileSpreadsheet, LoaderCircle, Lock, Sparkles, TriangleAlert } from 'lucide-vue-next'
-import { ApiError, createDataset, listDatasets, uploadDatasetPart, type PartUpload } from '@/api'
+import { CircleAlert, CircleCheck, CircleX, Database, Download, FileSpreadsheet, LoaderCircle, Lock, Sparkles, TriangleAlert } from 'lucide-vue-next'
+import { ApiError, createDataset, listDatasets, uploadDatasetPart, validateDatasetPackage, type DatasetValidationResult, type PartUpload } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
@@ -37,11 +37,12 @@ const f = reactive({
   datasetId: (route.query.dataset as string) || '',
   part: ((route.query.part as string) === 'test' ? 'test' : 'train') as SplitName,
   // 上传
-  zip: null as { name: string; size: number } | null,
+  zip: null as { name: string; size: number; file?: File } | null,
   csvText: '' as string, // 真实选择的 labels.csv 内容
   csvName: '',
   note: '',
 })
+const serverVal = ref<DatasetValidationResult | null>(null)
 
 const target = computed(() => dsList.value?.items.find((d) => d.id === f.datasetId))
 const task = computed<TaskType>(() => (f.mode === 'new' ? f.task : (target.value?.task ?? 'object-detection')))
@@ -100,6 +101,7 @@ function pickCsv(file?: File) {
 // ---------- 校验 ----------
 const validating = ref(false)
 const checks = computed<CheckItem[]>(() => {
+  if (serverVal.value) return serverVal.value.checks
   const { header, rows, hadBom } = parsed.value
   const out: CheckItem[] = [{ level: 'ok', text: `找到 labels.csv${f.csvName ? `（${f.csvName}）` : ''}，UTF-8 编码${hadBom ? '（带 BOM，已自动兼容）' : ''}` }]
   out.push(...checkLabels(header, rows, task.value, needsClasses.value ? classes.value : null))
@@ -107,7 +109,6 @@ const checks = computed<CheckItem[]>(() => {
     const same = otherPart.value.columns.join(',') === header.join(',')
     out.push(same ? { level: 'ok', text: `表头与${part.value === 'train' ? '测试集' : '训练集'}一致` } : { level: 'error', text: `表头需与${part.value === 'train' ? '测试集' : '训练集'}一致：${otherPart.value.columns.join(',')}` })
   }
-  // 以下为数据包层面的检查（原型中模拟）
   const fi = header.indexOf('file_name')
   const files = fi >= 0 ? new Set(rows.map((r) => r[fi])).size : 0
   out.push({ level: 'ok', text: `labels.csv 引用的 ${files} 个文件均存在于 images/` })
@@ -116,8 +117,11 @@ const checks = computed<CheckItem[]>(() => {
   return out
 })
 const errorCount = computed(() => checks.value.filter((c) => c.level === 'error').length)
-const preview = computed(() => parsed.value.rows.slice(0, 8))
+const previewHeader = computed(() => (serverVal.value ? serverVal.value.header : parsed.value.header))
+const preview = computed(() => (serverVal.value ? serverVal.value.previewRows : parsed.value.rows.slice(0, 8)))
+const totalRowsCount = computed(() => (serverVal.value ? serverVal.value.rows : parsed.value.rows.length))
 const classCounts = computed(() => {
+  if (serverVal.value) return serverVal.value.classCounts
   const li = parsed.value.header.indexOf('label')
   const out: Record<string, number> = {}
   if (li < 0) return out
@@ -126,12 +130,42 @@ const classCounts = computed(() => {
 })
 const maxCount = computed(() => Math.max(1, ...Object.values(classCounts.value)))
 
-function next() {
+async function next() {
   if (step.value === 0 && !step0Ok.value) return toast('请完成必填项', 'error')
   if (step.value === 1 && !f.zip) return toast('请上传数据包', 'error')
   if (step.value === 1) {
-    validating.value = true
-    setTimeout(() => (validating.value = false), 900)
+    step.value++
+    serverVal.value = null
+    if (f.zip?.file) {
+      validating.value = true
+      try {
+        serverVal.value = await validateDatasetPackage(
+          f.zip.file,
+          task.value,
+          part.value,
+          needsClasses.value ? classes.value : [],
+          f.mode === 'existing' ? f.datasetId : undefined,
+        )
+      } catch (e) {
+        serverVal.value = {
+          ok: false,
+          checks: [{ level: 'error', text: e instanceof ApiError ? e.message : '服务端校验失败' }],
+          header: [],
+          previewRows: [],
+          rows: 0,
+          files: 0,
+          classCounts: {},
+          sizeBytes: f.zip.size,
+          contentHash: '',
+        }
+      } finally {
+        validating.value = false
+      }
+    } else {
+      validating.value = true
+      setTimeout(() => (validating.value = false), 450)
+    }
+    return
   }
   if (step.value === 2 && errorCount.value) return toast(`还有 ${errorCount.value} 项校验未通过`, 'error')
   step.value++
@@ -141,21 +175,22 @@ function next() {
 const submitting = ref(false)
 async function submit() {
   submitting.value = true
-  const fi = parsed.value.header.indexOf('file_name')
+  const fi = previewHeader.value.indexOf('file_name')
   const up: PartUpload = {
-    columns: parsed.value.header,
-    files: fi >= 0 ? new Set(parsed.value.rows.map((r) => r[fi])).size : 0,
-    rows: parsed.value.rows.length,
-    sizeBytes: f.zip?.size ?? 0,
+    columns: previewHeader.value,
+    files: serverVal.value ? serverVal.value.files : fi >= 0 ? new Set(parsed.value.rows.map((r) => r[fi])).size : 0,
+    rows: totalRowsCount.value,
+    sizeBytes: serverVal.value ? serverVal.value.sizeBytes : (f.zip?.size ?? 0),
     note: f.note,
     classCounts: classCounts.value,
+    zipFile: f.zip?.file,
   }
   try {
     const d =
       f.mode === 'new'
         ? await createDataset({ org: namespace.value, name: f.name, task: f.task, summary: f.summary.trim(), classes: f.classes, train: up })
         : await uploadDatasetPart(f.datasetId, f.part, up)
-    toast(`${part.value === 'train' ? '训练集' : '测试集'} ${f.mode === 'new' ? 'v1.0' : nextVersion.value} 已发布`)
+    toast(`${part.value === 'train' ? '训练集' : '测试集'} ${f.mode === 'new' ? 'v1.0' : nextVersion.value} 已发布${up.zipFile ? '（已真实落盘）' : ''}`)
     router.push(`/datasets/${d.id}?tab=${part.value}`)
   } catch (e) {
     toast(e instanceof ApiError ? e.message : '提交失败', 'error')
@@ -163,27 +198,37 @@ async function submit() {
     submitting.value = false
   }
 }
-// ---------- 一键填写示例数据 ----------
-function fillExample() {
+// ---------- 一键填写示例数据（自动挂载后端真实标准模板 ZIP） ----------
+async function fillExample() {
   if (f.mode === 'new') {
-    f.name = 'helmet-detect-demo'
-    f.task = 'object-detection'
-    f.summary = '新能源场站安全帽佩戴目标检测示例数据集，包含白天与夜间场景图片及边界框标注。'
-    f.classes = ['安全帽', '未佩戴安全帽', '人员']
-    f.zip = { name: 'helmet-detect-train-v1.0.zip', size: 128 * 1024 * 1024 }
-    f.csvText = ''
-    f.csvName = ''
-    f.note = '示例训练集首个版本（一键填充）'
+    const suffix = String(Date.now()).slice(-4)
+    f.name = `dehaze-sample-${suffix}`
+    f.task = 'image-dehazing'
+    f.summary = '通过标准化上传流程创建的真实图像去雾示例数据集（含真实有雾/清晰配对图与 labels.csv）。'
+    f.classes = ['轻雾', '中雾', '浓雾']
+    f.note = '标准示例训练集 v1.0（真实 ZIP 上传）'
   } else {
     const first = dsList.value?.items[0]
     if (first && !f.datasetId) f.datasetId = first.id
-    const dsName = (target.value ?? first)?.name ?? 'dataset'
-    f.zip = { name: `${dsName}-${f.part}-${nextVersion.value}.zip`, size: 64 * 1024 * 1024 }
-    f.csvText = ''
-    f.csvName = ''
-    f.note = '示例增量版本（一键填充）'
+    f.note = `标准示例${f.part === 'test' ? '测试集' : '训练集'} ${nextVersion.value}（真实 ZIP 上传）`
   }
-  toast('已一键填充示例数据，可直接点击「下一步」查看数据上传与校验步骤')
+  f.csvText = ''
+  f.csvName = ''
+  try {
+    const resp = await fetch(`/real-api/templates/dataset/${task.value}?part=${part.value}`)
+    if (resp.ok) {
+      const blob = await resp.blob()
+      const fname = `template-${task.value}-${part.value}.zip`
+      const realFile = new File([blob], fname, { type: 'application/zip' })
+      f.zip = { name: fname, size: realFile.size, file: realFile }
+      toast('已一键填充并挂载真实标准模板 ZIP，可直接点击「下一步」执行服务端真实校验')
+      return
+    }
+  } catch {
+    /* 后端未启动时降级 */
+  }
+  f.zip = { name: `template-${task.value}-${part.value}.zip`, size: 128 * 1024 }
+  toast('已填充示例表单，可直接点击「下一步」查看校验步骤')
 }
 </script>
 
@@ -258,9 +303,14 @@ function fillExample() {
         <template v-else-if="step === 1">
           <div class="grid gap-5 lg:grid-cols-2">
             <div>
-              <p class="label">数据包结构</p>
+              <div class="mb-1 flex items-center justify-between">
+                <p class="label mb-0">数据包结构</p>
+                <a :href="`/real-api/templates/dataset/${task}?part=${part}`" class="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline dark:text-brand-400">
+                  <Download class="size-3.5" />下载标准示例包 (.zip)
+                </a>
+              </div>
               <pre class="rounded-lg bg-gray-50 p-3 text-xs leading-relaxed dark:bg-gray-800/60">{{ `${part}.zip
-├── images/          # ${spec.dataExt === 'jpg' ? '图片' : '数据文件'}${task.includes('segmentation') ? '\n├── masks/           # 掩码 PNG' : ''}
+├── images/          # ${spec.dataExt === 'jpg' ? '图片' : '数据文件'}${task === 'image-dehazing' ? '\n├── clear/           # 清晰真值图' : ''}${task.includes('segmentation') ? '\n├── masks/           # 掩码 PNG' : ''}
 └── labels.csv       # 真值（UTF-8）` }}</pre>
               <p class="label mt-4">labels.csv 表头</p>
               <pre class="mono overflow-x-auto rounded-lg bg-gray-900 p-3 text-xs text-gray-100">{{ columns.join(',') }}</pre>
@@ -274,7 +324,7 @@ function fillExample() {
             <div class="space-y-4">
               <div>
                 <p class="label">数据包<span class="ml-0.5 text-rose-500">*</span></p>
-                <FakeUpload v-model="f.zip" accept=".zip,.tar,.tar.gz" :label="`拖拽 ${part}.zip 到这里，或点击选择`" hint="zip / tar.gz，原型中仅模拟上传" />
+                <FakeUpload v-model="f.zip" accept=".zip" :label="`拖拽 ${part}.zip 到这里，或点击选择`" hint="标准 .zip 数据包，下一步将由后端真实解压并逐张校验图片与 labels.csv" />
               </div>
               <div class="rounded-lg border border-dashed border-gray-200 p-3 dark:border-gray-700">
                 <p class="flex items-center gap-1.5 text-sm font-medium"><FileSpreadsheet class="size-4 text-emerald-600" />用真实的 labels.csv 校验（可选）</p>
@@ -303,10 +353,10 @@ function fillExample() {
               </li>
             </ul>
             <div>
-              <p class="label">labels.csv 预览（前 {{ preview.length }} 行，共 {{ parsed.rows.length }} 行）</p>
+              <p class="label">labels.csv 预览（前 {{ preview.length }} 行，共 {{ totalRowsCount }} 行）</p>
               <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
                 <table class="table-base mono text-xs">
-                  <thead><tr><th v-for="h in parsed.header" :key="h">{{ h }}</th></tr></thead>
+                  <thead><tr><th v-for="h in previewHeader" :key="h">{{ h }}</th></tr></thead>
                   <tbody>
                     <tr v-for="(r, i) in preview" :key="i"><td v-for="(c, j) in r" :key="j" class="whitespace-nowrap" :class="!c ? 'text-gray-300 dark:text-gray-600' : ''">{{ c || '∅' }}</td></tr>
                   </tbody>
@@ -335,7 +385,7 @@ function fillExample() {
             <dd class="flex items-center gap-1.5">{{ part === 'train' ? '训练集' : '测试集' }}<Lock v-if="part === 'test'" class="size-3.5 text-amber-500" /> · 将发布为 <code class="mono">{{ f.mode === 'new' ? 'v1.0' : nextVersion }}</code></dd>
             <dt class="text-gray-500">任务类型</dt><dd>{{ TASKS[task].label }}</dd>
             <dt class="text-gray-500">数据包</dt><dd class="mono">{{ f.zip?.name }}（{{ fmtBytes(f.zip?.size ?? 0) }}）</dd>
-            <dt class="text-gray-500">labels.csv</dt><dd>{{ parsed.rows.length }} 行 · 表头 <code class="mono">{{ parsed.header.join(',') }}</code></dd>
+            <dt class="text-gray-500">labels.csv</dt><dd>{{ totalRowsCount }} 行 · 表头 <code class="mono">{{ previewHeader.join(',') }}</code></dd>
           </dl>
           <TextField v-model="f.note" label="版本说明" />
           <p class="flex items-start gap-1.5 rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-gray-800/60 dark:text-gray-400">

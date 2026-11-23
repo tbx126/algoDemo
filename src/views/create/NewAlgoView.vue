@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Box, Check, CircleAlert, Plus, ShieldCheck, Sparkles, Trash2 } from 'lucide-vue-next'
-import { ApiError, createAlgorithm, listTags } from '@/api'
+import { Box, Check, CircleAlert, CircleCheck, CircleX, Download, LoaderCircle, Play, Plus, ShieldCheck, Sparkles, Trash2 } from 'lucide-vue-next'
+import { ApiError, createAlgorithm, listTags, uploadRealAlgorithm, validateAlgorithmPackage, type AlgoValidationResult } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
@@ -31,11 +31,118 @@ import FormSection from '@/components/form/FormSection.vue'
 import TextField from '@/components/form/TextField.vue'
 import TagInput from '@/components/form/TagInput.vue'
 import FileSlot from '@/components/form/FileSlot.vue'
+import FakeUpload from '@/components/ui/FakeUpload.vue'
 import NecessityBadge from '@/components/form/NecessityBadge.vue'
 
-type FileV = { name: string; size: number } | null
+type FileV = { name: string; size: number; file?: File } | null
 const router = useRouter()
 const { can, user, state } = useSession()
+
+/** 接入模式：standard = 标准化算法包（可直接真实推理与评测）；declaration = 完整 6 步入库申报表 */
+const mode = ref<'standard' | 'declaration'>('standard')
+
+const sf = reactive({
+  owner: state.role === 'admin' ? 'Admin' : (user.value.orgId ?? orgs.find((o) => o.kind === 'vendor')!.id),
+  name: '',
+  displayName: '',
+  version: 'v1.0.0',
+  task: 'image-dehazing' as TaskType,
+  business: 'other' as BusinessCategory,
+  framework: 'PyTorch' as Framework,
+  gpuMem: 1.0,
+  tags: ['标准化上传', '真实部署'] as string[],
+  summary: '',
+  changelog: '标准化算法包首次发布',
+  pkg: null as FileV,
+})
+const smokeLoading = ref(false)
+const smokeResult = ref<AlgoValidationResult | null>(null)
+const stdSubmitting = ref(false)
+
+async function runSmokeTest() {
+  if (!sf.pkg?.file) return toast('请先选择 .zip 算法包或 predictor.py 文件', 'error')
+  smokeLoading.value = true
+  smokeResult.value = null
+  try {
+    smokeResult.value = await validateAlgorithmPackage(sf.pkg.file, sf.task)
+    if (smokeResult.value.ok) toast(`冒烟测试通过（${smokeResult.value.smokeLatencyMs} ms），可直接发布并评测`)
+    else toast('冒烟测试未通过，请根据检查项修正 predictor.py', 'error')
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : '冒烟测试请求失败', 'error')
+  } finally {
+    smokeLoading.value = false
+  }
+}
+
+const stdReady = computed(
+  () =>
+    /^[a-z0-9][a-z0-9-]{1,48}$/.test(sf.name) &&
+    sf.displayName.trim().length >= 2 &&
+    /^v?\d+\.\d+\.\d+$/.test(sf.version) &&
+    sf.summary.trim().length >= 4 &&
+    !!sf.pkg?.file &&
+    !!smokeResult.value?.ok,
+)
+
+async function submitStandard() {
+  if (!stdReady.value || !sf.pkg?.file) return
+  stdSubmitting.value = true
+  try {
+    const a = await uploadRealAlgorithm(
+      {
+        org: sf.owner,
+        name: sf.name,
+        displayName: sf.displayName.trim(),
+        task: sf.task,
+        business: sf.business,
+        framework: sf.framework,
+        version: sf.version.startsWith('v') ? sf.version : `v${sf.version}`,
+        tags: sf.tags,
+        summary: sf.summary.trim(),
+        changelog: sf.changelog.trim() || '标准化算法包发布',
+        gpuMem: sf.gpuMem,
+      },
+      sf.pkg.file,
+    )
+    toast(can.value.needsReview ? '已上传并通过冒烟测试，等待管理员审核' : '算法已真实发布，可立即在线推理与发起评测')
+    router.push(`/algorithms/${a.id}`)
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : '发布失败', 'error')
+  } finally {
+    stdSubmitting.value = false
+  }
+}
+
+async function fillStandardExample() {
+  const suffix = String(Date.now()).slice(-4)
+  sf.owner = state.role === 'admin' ? 'Admin' : (user.value.orgId ?? sf.owner)
+  sf.name = `custom-${sf.task === 'image-dehazing' ? 'dehaze' : sf.task === 'image-classification' ? 'cls' : 'det'}-${suffix}`
+  sf.displayName =
+    sf.task === 'image-dehazing'
+      ? `自适应对比度去雾（示例 ${suffix}）`
+      : sf.task === 'image-classification'
+        ? `颜色统计图像识别（示例 ${suffix}）`
+        : `标准目标检测（示例 ${suffix}）`
+  sf.version = 'v1.0.0'
+  sf.framework = 'PyTorch'
+  sf.gpuMem = 0.5
+  sf.summary = `通过平台标准化流程上传的「${TASKS[sf.task].label}」可执行算法，已内置标准 predictor.py 入口，可直接在线推理与真实评测。`
+  sf.changelog = '一键填充标准模板包并自动冒烟测试'
+  try {
+    const resp = await fetch(`/real-api/templates/algorithm/${sf.task}`)
+    if (resp.ok) {
+      const blob = await resp.blob()
+      const fname = `template-algo-${sf.task}.zip`
+      const file = new File([blob], fname, { type: 'application/zip' })
+      sf.pkg = { name: fname, size: file.size, file }
+      await runSmokeTest()
+      return
+    }
+  } catch {
+    /* ignore */
+  }
+  toast('未能从后端获取模板包，请确认后端服务已启动', 'error')
+}
 
 const steps = ['基本信息', '封面与应用条件', '技术信息', '分析参数', '交付材料', '确认提交']
 const step = ref(0)
@@ -346,7 +453,7 @@ function fillExample() {
         <h1 class="flex items-center gap-2 text-2xl font-semibold text-gray-900 dark:text-white"><Box class="size-6 text-brand-600" />{{ can.needsReview ? '提交算法' : '新建算法' }}</h1>
         <p class="mt-1 text-sm text-gray-500">按《智能运维平台算法中心算法标准 1.0》填写，提交后自动生成 packageinfo.xml、managementinfo.json、technicalinfo.json。带 <span class="text-rose-500">*</span> 为必选项，长度按 UTF-8 字节计算。</p>
       </div>
-      <button v-if="can.admin" type="button" class="btn-default shrink-0" @click="fillExample">
+      <button v-if="can.admin" type="button" class="btn-default shrink-0" @click="mode === 'standard' ? fillStandardExample() : fillExample()">
         <Sparkles class="size-4 text-amber-500" />一键填写示例数据
       </button>
     </div>
@@ -356,6 +463,128 @@ function fillExample() {
       <div v-if="can.needsReview" class="mt-4 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-900/20 dark:text-amber-300">
         <ShieldCheck class="size-4 shrink-0" />厂商提交的算法需经管理员审核后才会构建和运行；提交后仅你所在厂商与管理员、演示账号可见。
       </div>
+
+      <!-- 接入模式切换 -->
+      <div class="mt-5 grid gap-2 sm:grid-cols-2">
+        <button
+          type="button"
+          class="flex cursor-pointer items-start gap-2.5 rounded-lg border p-3.5 text-left transition"
+          :class="mode === 'standard' ? 'border-brand-500 bg-brand-50/40 ring-2 ring-brand-500/20 dark:bg-brand-600/10' : 'border-gray-200 hover:border-gray-300 dark:border-gray-700'"
+          @click="mode = 'standard'"
+        >
+          <ShieldCheck class="mt-0.5 size-4 shrink-0 text-brand-600" />
+          <span>
+            <span class="block text-sm font-semibold text-gray-900 dark:text-white">标准化算法包接入（推荐）</span>
+            <span class="mt-0.5 block text-xs text-gray-500">上传含 <code class="mono">predictor.py</code> 的 .zip / .py，自动执行真实冒烟测试，发布后即可在线推理与真实评测</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          class="flex cursor-pointer items-start gap-2.5 rounded-lg border p-3.5 text-left transition"
+          :class="mode === 'declaration' ? 'border-brand-500 bg-brand-50/40 ring-2 ring-brand-500/20 dark:bg-brand-600/10' : 'border-gray-200 hover:border-gray-300 dark:border-gray-700'"
+          @click="mode = 'declaration'"
+        >
+          <Box class="mt-0.5 size-4 shrink-0 text-gray-500" />
+          <span>
+            <span class="block text-sm font-semibold text-gray-900 dark:text-white">完整入库申报表（6 步标准表单）</span>
+            <span class="mt-0.5 block text-xs text-gray-500">按《算法标准 1.0》填写全量合规字段，生成 packageinfo.xml / managementinfo.json / technicalinfo.json</span>
+          </span>
+        </button>
+      </div>
+
+      <!-- 标准化算法包接入表单 -->
+      <form v-if="mode === 'standard'" class="card mt-4 space-y-5 p-6" @submit.prevent="submitStandard">
+        <div class="grid gap-4 sm:grid-cols-3">
+          <div>
+            <label class="label" for="s-org">所属组织</label>
+            <select id="s-org" v-model="sf.owner" class="input" :disabled="state.role !== 'admin'">
+              <option v-for="o in owners" :key="o.id" :value="o.id">{{ o.displayName }}（{{ o.id }}）</option>
+            </select>
+          </div>
+          <TextField v-model="sf.name" label="算法英文标识" required mono :hint="`ID：${sf.owner}/${sf.name || '…'}（小写字母/数字/连字符）`" />
+          <TextField v-model="sf.displayName" label="算法中文名称" required hint="列表中显示的中文名" />
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-4">
+          <div>
+            <label class="label" for="s-task">任务分类<span class="ml-0.5 text-rose-500">*</span></label>
+            <select id="s-task" v-model="sf.task" class="input" @change="smokeResult = null">
+              <option v-for="(v, k) in TASKS" :key="k" :value="k">{{ v.label }}</option>
+            </select>
+          </div>
+          <div>
+            <label class="label" for="s-biz">业务分类</label>
+            <select id="s-biz" v-model="sf.business" class="input">
+              <option v-for="(v, k) in BUSINESS_CATEGORIES" :key="k" :value="k">{{ v.label }}</option>
+            </select>
+          </div>
+          <div>
+            <label class="label" for="s-fw">推理框架</label>
+            <select id="s-fw" v-model="sf.framework" class="input">
+              <option v-for="fw in ['PyTorch', 'ONNX', 'TensorRT', 'OpenCV', 'NumPy', 'Paddle']" :key="fw">{{ fw }}</option>
+            </select>
+          </div>
+          <div>
+            <label class="label" for="s-ver">版本号</label>
+            <input id="s-ver" v-model.trim="sf.version" class="input mono" placeholder="v1.0.0" />
+          </div>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-[1fr_140px]">
+          <TextField v-model="sf.summary" label="算法简介" required multiline :rows="2" />
+          <div>
+            <label class="label" for="s-gpu">声明显存 (GB)</label>
+            <input id="s-gpu" v-model.number="sf.gpuMem" type="number" min="0" max="80" step="0.5" class="input" />
+          </div>
+        </div>
+
+        <TagInput v-model="sf.tags" label="标签" :suggestions="tagSuggestions" />
+
+        <!-- 标准化算法包上传 + 模板下载 + 在线冒烟测试 -->
+        <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p class="text-sm font-semibold text-gray-900 dark:text-white">标准算法包（.zip 或单文件 predictor.py）<span class="ml-0.5 text-rose-500">*</span></p>
+              <p class="text-xs text-gray-500">需实现 <code class="mono">Predictor(model_dir).predict(image_bytes, params) -&gt; dict</code> 或顶层 <code class="mono">predict()</code> 函数</p>
+            </div>
+            <a :href="`/real-api/templates/algorithm/${sf.task}`" class="btn-default py-1 text-xs">
+              <Download class="size-3.5" />下载「{{ TASKS[sf.task].label }}」标准模板 (.zip)
+            </a>
+          </div>
+          <FakeUpload v-model="sf.pkg" accept=".zip,.py" label="拖拽标准算法包 (.zip / predictor.py) 到这里，或点击选择" hint="上传后点击下方「运行在线冒烟测试」，由后端真实加载并校验输出格式" @update:model-value="smokeResult = null" />
+
+          <div class="mt-3 flex flex-wrap items-center gap-2">
+            <button type="button" class="btn-primary text-xs" :disabled="!sf.pkg?.file || smokeLoading" @click="runSmokeTest">
+              <LoaderCircle v-if="smokeLoading" class="size-3.5 animate-spin" />
+              <Play v-else class="size-3.5" />
+              {{ smokeLoading ? '正在后端执行冒烟测试…' : '运行在线冒烟测试' }}
+            </button>
+            <span v-if="smokeResult?.ok" class="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+              <CircleCheck class="size-4" />冒烟测试通过（{{ smokeResult.smokeLatencyMs }} ms），可立即发布
+            </span>
+          </div>
+
+          <div v-if="smokeResult" class="mt-3 space-y-2 rounded-lg bg-gray-50 p-3 text-xs dark:bg-gray-800/60">
+            <ul class="space-y-1">
+              <li v-for="(c, i) in smokeResult.checks" :key="i" class="flex items-start gap-1.5" :class="c.level === 'error' ? 'text-rose-600' : 'text-gray-700 dark:text-gray-300'">
+                <CircleCheck v-if="c.level === 'ok'" class="mt-0.5 size-3.5 shrink-0 text-emerald-500" />
+                <CircleX v-else class="mt-0.5 size-3.5 shrink-0 text-rose-500" />
+                {{ c.text }}
+              </li>
+            </ul>
+            <pre v-if="smokeResult.smokeOutput" class="mono max-h-32 overflow-auto rounded bg-gray-900 p-2 text-[11px] text-gray-100">{{ JSON.stringify(smokeResult.smokeOutput, null, 2) }}</pre>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 border-t border-gray-100 pt-4 dark:border-gray-800">
+          <button type="button" class="btn-default" @click="router.back()">取消</button>
+          <button type="submit" class="btn-brand" :disabled="!stdReady || stdSubmitting">
+            {{ stdSubmitting ? '发布中…' : can.needsReview ? '提交审核' : '发布并立即上线' }}
+          </button>
+        </div>
+      </form>
+
+      <template v-else>
 
       <!-- 步骤条 -->
       <ol class="no-scrollbar mt-6 flex items-center gap-1 overflow-x-auto pb-1 text-sm">
@@ -740,6 +969,7 @@ function fillExample() {
           <button v-else type="button" class="btn-brand" :disabled="submitting" @click="submit">{{ submitting ? '提交中…' : can.needsReview ? '提交审核' : '创建并构建' }}</button>
         </div>
       </form>
+      </template>
     </template>
   </div>
 </template>

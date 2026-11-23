@@ -3,22 +3,17 @@ import { ref } from 'vue'
 import { CircleCheck, FileUp, LoaderCircle, X } from 'lucide-vue-next'
 import { fmtBytes } from '@/utils/format'
 
-/** 模拟上传：读取文件名与大小，显示进度条；不会真正上传任何内容 */
+/** 文件选择与上传槽：保留原始 File 对象供真实后端上传 */
 defineProps<{ accept?: string; hint?: string; label: string }>()
-const file = defineModel<{ name: string; size: number } | null>({ default: null })
-const progress = ref(0)
+const file = defineModel<{ name: string; size: number; file?: File } | null>({ default: null })
+const progress = ref(100)
 const el = ref<HTMLInputElement>()
 const over = ref(false)
 
 function start(f?: File) {
   if (!f) return
-  file.value = { name: f.name, size: f.size }
-  progress.value = 0
-  const step = () => {
-    progress.value = Math.min(100, progress.value + 8 + Math.random() * 18)
-    if (progress.value < 100) setTimeout(step, 120)
-  }
-  step()
+  file.value = { name: f.name, size: f.size, file: f }
+  progress.value = 100
 }
 </script>
 

@@ -11,13 +11,13 @@ const { state } = useSession()
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col">
+  <div class="flex flex-col" :class="route.meta.fullBleed ? 'h-screen overflow-hidden' : 'min-h-screen'">
     <template v-if="!route.meta.bare">
       <AppHeader />
-      <main class="flex-1">
+      <main :class="route.meta.fullBleed ? 'flex-1 min-h-0 overflow-hidden' : 'flex-1'">
         <RouterView :key="route.path + '|' + state.role" />
       </main>
-      <AppFooter />
+      <AppFooter v-if="!route.meta.fullBleed" />
     </template>
     <RouterView v-else />
     <ToastHost />

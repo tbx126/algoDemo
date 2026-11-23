@@ -40,7 +40,14 @@ import { algoFullLabel } from '@/utils/display'
 // 写操作（新建厂商、上传数据集、编辑信息等）保存到浏览器 localStorage，刷新后仍在。
 // 恢复时就地替换 mock 数组的内容，直接引用 mock 的组件（如头像、基准名称）也能看到最新数据。
 const STORE_KEY = 'algohub-db-v6'
-const DEFAULT_TAGS = [...new Set([...A0.flatMap((a) => a.tags), '高精度', '实时推理', '边缘端'])]
+const TAG_CLEAN_KEY = 'algohub-tags-cleaned-v1'
+const DEFAULT_TAGS = ['真实部署', '基线算法', '高精度', '实时推理', '边缘端', '新能源场站', '可见光巡检', '表计读数', '状态识别']
+const LEGACY_NOISY_TAGS = new Set([
+  '猫狗识别', '图像分类', '安防周界', '图像去雾', '传统物理先验', '暗通道', 'CPU',
+  '轻量物理CNN', '注意力CNN', '特征融合', '现代强基线', '细节增强',
+  '随机基线', '全任务通用', '对照实验', 'DCP', 'AOD-Net', 'FFA-Net', 'DEA-Net',
+  '红色LED数显', '避雷器电流表与放电计数', '柱状压板状态', 'GIS汇控状态灯', '旋钮档位', '主变油位',
+])
 const T0: string[] = [...DEFAULT_TAGS]
 const DEL0: string[] = []
 const SOURCES = { algorithms: A0, datasets: D0, benchmarks: B0, evals: E0, evaluators: EV0, orgs: O0, users: U0, tags: T0, deletedRealIds: DEL0 }
@@ -52,6 +59,21 @@ try {
   }
 } catch {
   /* 数据损坏或不可用时使用默认 mock */
+}
+// 一次性精简历史冗余标签（清理与任务分类/算法名重复的旧标签）
+try {
+  if (!localStorage.getItem(TAG_CLEAN_KEY)) {
+    const defaultById = new Map(A0.map((a) => [a.id, a.tags]))
+    for (const a of SOURCES.algorithms) {
+      if (defaultById.has(a.id)) a.tags = [...defaultById.get(a.id)!]
+      else a.tags = a.tags.filter((t) => !LEGACY_NOISY_TAGS.has(t))
+    }
+    const kept = SOURCES.tags.filter((t) => !LEGACY_NOISY_TAGS.has(t))
+    SOURCES.tags.splice(0, SOURCES.tags.length, ...new Set([...DEFAULT_TAGS, ...kept]))
+    localStorage.setItem(TAG_CLEAN_KEY, '1')
+  }
+} catch {
+  /* ignore */
 }
 // 兼容旧版 localStorage 数据：补齐缺失的 business 字段、标签库与区域侧演示账号
 for (const a of SOURCES.algorithms) if (!a.business) a.business = 'inspection'
@@ -133,7 +155,8 @@ const REAL_ALGO_IDS = new Set([REAL_ALGO_ID, ...REAL_DEHAZE_IDS, REAL_RANDOM_ID]
 const LEGACY_REAL_ALGO_IDS = new Set(['Admin/dehaze'])
 const REAL_DS_ID = 'Admin/cat-dog-dataset'
 const REAL_DEHAZE_DS_ID = 'Admin/dehaze-dataset'
-export const REAL_DS_IDS = new Set([REAL_DS_ID, REAL_DEHAZE_DS_ID])
+const REAL_OCR_DS_ID = 'Admin/sroie-ocr-dataset'
+export const REAL_DS_IDS = new Set([REAL_DS_ID, REAL_DEHAZE_DS_ID, REAL_OCR_DS_ID])
 const REAL_BENCH_ID = 'cat-dog-cls-bench'
 const REAL_DEHAZE_BENCH_ID = 'dehaze-bench'
 const REAL_BENCH_IDS = new Set([REAL_BENCH_ID, REAL_DEHAZE_BENCH_ID])
@@ -150,8 +173,15 @@ function applyRealBootstrap(payload: {
   benchmark: Benchmark
   benchmarks?: Benchmark[]
   evals: EvalRun[]
+  realAlgoIds?: string[]
+  realDatasetIds?: string[]
+  realBenchmarkIds?: string[]
   warmContainers?: QueueStatus['warmContainers']
 }) {
+  if (payload.realAlgoIds) for (const id of payload.realAlgoIds) REAL_ALGO_IDS.add(id)
+  if (payload.realDatasetIds) for (const id of payload.realDatasetIds) REAL_DS_IDS.add(id)
+  if (payload.realBenchmarkIds) for (const id of payload.realBenchmarkIds) REAL_BENCH_IDS.add(id)
+
   const incoming = payload.algorithms?.length ? payload.algorithms : [payload.algorithm]
   for (const algo of incoming) {
     if (db.deletedRealIds.includes(algo.id)) continue
@@ -163,7 +193,7 @@ function applyRealBootstrap(payload: {
         task: prev.task || algo.task,
         business: prev.business || algo.business,
         framework: prev.framework || algo.framework,
-        tags: prev.tags.length ? prev.tags : algo.tags,
+        tags: algo.tags.length ? algo.tags : prev.tags,
         summary: prev.summary || algo.summary,
         readme: prev.readme || algo.readme,
       }
@@ -204,6 +234,7 @@ function applyRealBootstrap(payload: {
   }
   const activeEvals = payload.evals.filter((e) => !db.deletedRealIds.includes(e.algorithmId) && !db.deletedRealIds.includes(e.benchmarkId))
   db.evals.unshift(...activeEvals)
+  pruneUnusedTags()
   if (payload.warmContainers) realWarmContainers = payload.warmContainers
 }
 
@@ -427,6 +458,99 @@ export interface PartUpload {
   sizeBytes: number
   note: string
   classCounts: Record<string, number>
+  zipFile?: File
+}
+
+export interface DatasetValidationResult {
+  ok: boolean
+  checks: { level: 'ok' | 'warn' | 'error'; text: string }[]
+  header: string[]
+  previewRows: string[][]
+  rows: number
+  files: number
+  classCounts: Record<string, number>
+  sizeBytes: number
+  contentHash: string
+}
+
+export async function validateDatasetPackage(
+  zipFile: File,
+  task: TaskType,
+  part: SplitName,
+  classes: string[],
+  datasetId?: string,
+): Promise<DatasetValidationResult> {
+  const fd = new FormData()
+  fd.append('zip_file', zipFile, zipFile.name)
+  fd.append('task', task)
+  fd.append('part', part)
+  fd.append('classes_json', JSON.stringify(classes))
+  if (datasetId) fd.append('dataset_id', datasetId)
+  const resp = await fetch('/real-api/datasets/validate', { method: 'POST', body: fd })
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: '服务端数据集校验失败' }))
+    throw new ApiError(resp.status, err.detail || '服务端数据集校验失败')
+  }
+  return await resp.json()
+}
+
+export interface AlgoValidationResult {
+  ok: boolean
+  checks: { level: 'ok' | 'warn' | 'error'; text: string }[]
+  smokeLatencyMs?: number
+  smokeOutput?: unknown
+  files?: { path: string; size: number; kind: 'code' | 'config' | 'weights' | 'doc' }[]
+  weightsSize?: number
+  weightsHash?: string
+}
+
+export async function validateAlgorithmPackage(file: File, task: TaskType): Promise<AlgoValidationResult> {
+  const fd = new FormData()
+  fd.append('task', task)
+  fd.append('package_file', file, file.name)
+  const resp = await fetch('/real-api/algorithms/validate', { method: 'POST', body: fd })
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: '算法包校验失败' }))
+    throw new ApiError(resp.status, err.detail || '算法包校验失败')
+  }
+  return await resp.json()
+}
+
+export async function uploadRealAlgorithm(
+  meta: {
+    org: string
+    name: string
+    displayName: string
+    task: TaskType
+    business: BusinessCategory
+    framework: Algorithm['framework']
+    version: string
+    tags: string[]
+    summary: string
+    changelog: string
+    gpuMem: number
+    labels?: string[]
+    declaration?: AlgoDeclaration
+  },
+  packageFile: File,
+): Promise<Algorithm> {
+  const { user, state } = useSession()
+  const fd = new FormData()
+  fd.append('metadata_json', JSON.stringify(meta))
+  fd.append('created_by', user.value.username)
+  fd.append('role', state.role)
+  fd.append('package_file', packageFile, packageFile.name)
+  const resp = await fetch('/real-api/algorithms', { method: 'POST', body: fd })
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: '算法包上传失败' }))
+    throw new ApiError(resp.status, err.detail || '算法包上传失败')
+  }
+  const algo = (await resp.json()) as Algorithm
+  REAL_ALGO_IDS.add(algo.id)
+  const idx = db.algorithms.findIndex((a) => a.id === algo.id)
+  if (idx >= 0) db.algorithms[idx] = algo
+  else db.algorithms.unshift(algo)
+  return clone(algo)
 }
 
 function newVersion(prev: DatasetPart | null, up: PartUpload, seed: string): DatasetVersion {
@@ -443,10 +567,32 @@ function newVersion(prev: DatasetPart | null, up: PartUpload, seed: string): Dat
   }
 }
 
-// POST /api/datasets —— 新建数据集时先上传训练集；测试集随后单独上传
+// POST /api/datasets —— 新建数据集时先上传训练集；测试集随后单独上传（有真实 zipFile 时直接落盘后端）
 export async function createDataset(input: Pick<Dataset, 'org' | 'name' | 'task' | 'summary' | 'classes'> & { train: PartUpload }): Promise<Dataset> {
-  await delay(600)
   if (!useSession().can.value.createDataset) throw new ApiError(403, '仅管理员可以上传数据集')
+  if (input.train.zipFile) {
+    const fd = new FormData()
+    fd.append('org', input.org)
+    fd.append('name', input.name)
+    fd.append('task', input.task)
+    fd.append('summary', input.summary)
+    fd.append('classes_json', JSON.stringify(input.classes))
+    fd.append('note', input.train.note || '首个版本')
+    fd.append('created_by', useSession().user.value.username)
+    fd.append('zip_file', input.train.zipFile, input.train.zipFile.name)
+    const resp = await fetch('/real-api/datasets', { method: 'POST', body: fd })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: '真实数据集上传失败' }))
+      throw new ApiError(resp.status, err.detail || '真实数据集上传失败')
+    }
+    const d = (await resp.json()) as Dataset
+    REAL_DS_IDS.add(d.id)
+    const idx = db.datasets.findIndex((x) => x.id === d.id)
+    if (idx >= 0) db.datasets[idx] = d
+    else db.datasets.unshift(d)
+    return clone(d)
+  }
+  await delay(600)
   const id = `${input.org}/${input.name}`
   if (db.datasets.some((d) => d.id === id)) throw new ApiError(409, '同名数据集已存在')
   const { train, ...meta } = input
@@ -467,10 +613,26 @@ export async function createDataset(input: Pick<Dataset, 'org' | 'name' | 'task'
   return clone(d)
 }
 
-// POST /api/datasets/{id}/{part}/versions —— 上传训练集或测试集的新版本（仅管理员）
+// POST /api/datasets/{id}/{part}/versions —— 上传训练集或测试集的新版本（有真实 zipFile 时直接落盘后端）
 export async function uploadDatasetPart(id: string, partName: SplitName, up: PartUpload): Promise<Dataset> {
-  await delay(600)
   if (!useSession().can.value.createDataset) throw new ApiError(403, '仅管理员可以上传数据')
+  if (up.zipFile && REAL_DS_IDS.has(id)) {
+    const fd = new FormData()
+    fd.append('note', up.note || '增量更新')
+    fd.append('created_by', useSession().user.value.username)
+    fd.append('zip_file', up.zipFile, up.zipFile.name)
+    const resp = await fetch(`/real-api/datasets/${id}/${partName}`, { method: 'POST', body: fd })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: '真实分片上传失败' }))
+      throw new ApiError(resp.status, err.detail || '真实分片上传失败')
+    }
+    const d = (await resp.json()) as Dataset
+    const idx = db.datasets.findIndex((x) => x.id === d.id)
+    if (idx >= 0) db.datasets[idx] = d
+    else db.datasets.unshift(d)
+    return clone(d)
+  }
+  await delay(600)
   const d = db.datasets.find((x) => x.id === id)
   if (!d) throw new ApiError(404, '数据集不存在')
   const prev = d[partName]
@@ -506,10 +668,30 @@ export async function getBenchmark(id: string): Promise<Benchmark> {
   return clone(b)
 }
 
-export async function createBenchmark(input: Omit<Benchmark, 'id' | 'createdAt' | 'split'>): Promise<Benchmark> {
+export async function createBenchmark(
+  input: Omit<Benchmark, 'id' | 'createdAt' | 'split'> & { evaluatorScript?: File },
+): Promise<Benchmark> {
+  if (REAL_DS_IDS.has(input.datasetId)) {
+    const { evaluatorScript, ...meta } = input
+    const fd = new FormData()
+    fd.append('metadata_json', JSON.stringify(meta))
+    if (evaluatorScript) fd.append('evaluator_script', evaluatorScript, evaluatorScript.name)
+    const resp = await fetch('/real-api/benchmarks', { method: 'POST', body: fd })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: '真实评测基准创建失败' }))
+      throw new ApiError(resp.status, err.detail || '真实评测基准创建失败')
+    }
+    const b = (await resp.json()) as Benchmark
+    REAL_BENCH_IDS.add(b.id)
+    const idx = db.benchmarks.findIndex((x) => x.id === b.id)
+    if (idx >= 0) db.benchmarks[idx] = b
+    else db.benchmarks.unshift(b)
+    return clone(b)
+  }
   await delay(500)
   if (db.benchmarks.some((b) => b.name === input.name)) throw new ApiError(409, '同名 Benchmark 已存在')
-  const b: Benchmark = { ...input, id: input.name, split: 'test', createdAt: new Date().toISOString() }
+  const { evaluatorScript: _, ...rest } = input
+  const b: Benchmark = { ...rest, id: input.name, split: 'test', createdAt: new Date().toISOString() }
   db.benchmarks.unshift(b)
   return clone(b)
 }
@@ -559,7 +741,7 @@ export async function listEvals(f: { algorithmId?: string; benchmarkId?: string;
 }
 
 export async function getEval(id: string): Promise<EvalRun> {
-  if (id.startsWith('ev-real-') || id.startsWith('ev-dehaze-')) {
+  if (id.startsWith('ev-real-') || id.startsWith('ev-dehaze-') || id.startsWith('ev-custom-')) {
     await syncRealBackend()
     const resp = await fetch(`/real-api/evals/${encodeURIComponent(id)}`)
     if (resp.ok) {
@@ -590,11 +772,8 @@ export async function createEval(input: { algorithmId: string; algoVersion: stri
   const b = db.benchmarks.find((x) => x.id === input.benchmarkId)!
   if (input.algorithmId !== REAL_RANDOM_ID && a.task !== b.task) throw new ApiError(400, '算法任务类型与 Benchmark 不匹配')
 
-  // 猫狗算法 / 随机基线 × 猫狗基准，或各去雾路线算法 × 去雾基准：走真实后端评测
-  if (
-    (input.benchmarkId === REAL_BENCH_ID && (input.algorithmId === REAL_ALGO_ID || input.algorithmId === REAL_RANDOM_ID)) ||
-    (input.benchmarkId === REAL_DEHAZE_BENCH_ID && REAL_DEHAZE_IDS.has(input.algorithmId))
-  ) {
+  // 所有真实后端算法（内置或自助上传）× 所有真实后端评测基准：统一走真实后端评测引擎
+  if (REAL_ALGO_IDS.has(input.algorithmId) && REAL_BENCH_IDS.has(input.benchmarkId)) {
     const resp = await fetch('/real-api/evals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -700,8 +879,8 @@ export async function infer(algorithmId: string, version: string, input: { dataU
     if (!resp.ok) throw new ApiError(resp.status, '随机推理服务调用失败')
     return await resp.json()
   }
-  // 猫狗算法 / 图像去雾各路线算法：走真实 PyTorch/NumPy 后端推理
-  if (algorithmId === REAL_ALGO_ID || REAL_DEHAZE_IDS.has(algorithmId)) {
+  // 所有真实后端算法（内置或自助上传）：统一走真实 PyTorch/NumPy 后端推理
+  if (REAL_ALGO_IDS.has(algorithmId)) {
     const fd = new FormData()
     fd.append('version', version)
     if (input.file) {
@@ -890,6 +1069,7 @@ export async function updateAlgorithm(id: string, patch: Partial<Pick<Algorithm,
   }
   Object.assign(a, patch, { updatedAt: new Date().toISOString() })
   a.algoYaml = syncAlgoYaml(a)
+  if (patch.tags) pruneUnusedTags()
   return clone(a)
 }
 
@@ -905,6 +1085,7 @@ export async function updateAlgorithmTags(id: string, tags: string[]): Promise<A
   a.tags = cleaned
   a.algoYaml = syncAlgoYaml(a)
   a.updatedAt = new Date().toISOString()
+  pruneUnusedTags()
   return clone(a)
 }
 
@@ -998,12 +1179,23 @@ export interface TagSummary {
   count: number
 }
 
+// 清理数量为 0 的闲置标签（只保留至少被 1 个算法引用的标签）
+function pruneUnusedTags() {
+  const used = new Set(db.algorithms.flatMap((a) => a.tags))
+  for (let i = db.tags.length - 1; i >= 0; i--) {
+    if (!used.has(db.tags[i])) db.tags.splice(i, 1)
+  }
+}
+
 // GET /api/tags
-export async function listTags(): Promise<TagSummary[]> {
+export async function listTags(includeEmpty = false): Promise<TagSummary[]> {
   await delay(80)
   const algos = visible(db.algorithms)
   const names = [...new Set([...db.tags, ...algos.flatMap((a) => a.tags)])]
-  return names.map((name) => ({ name, count: algos.filter((a) => a.tags.includes(name)).length }))
+  return names
+    .map((name) => ({ name, count: algos.filter((a) => a.tags.includes(name)).length }))
+    .filter((t) => includeEmpty || t.count > 0)
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-CN'))
 }
 
 // POST /api/tags
@@ -1060,11 +1252,15 @@ export async function deleteAlgorithm(id: string): Promise<void> {
   requireAdmin()
   const idx = db.algorithms.findIndex((x) => x.id === id)
   if (idx < 0) throw new ApiError(404, '算法不存在')
+  if (REAL_ALGO_IDS.has(id)) {
+    await fetch(`/real-api/algorithms/${id}`, { method: 'DELETE' }).catch(() => {})
+  }
   db.algorithms.splice(idx, 1)
   for (let i = db.evals.length - 1; i >= 0; i--) {
     if (db.evals[i].algorithmId === id) db.evals.splice(i, 1)
   }
   if (REAL_ALGO_IDS.has(id) && !db.deletedRealIds.includes(id)) db.deletedRealIds.push(id)
+  pruneUnusedTags()
 }
 
 // DELETE /api/datasets/{id} —— 管理员删除数据集及其关联评测基准与评测记录
@@ -1073,6 +1269,9 @@ export async function deleteDataset(id: string): Promise<void> {
   requireAdmin()
   const idx = db.datasets.findIndex((x) => x.id === id)
   if (idx < 0) throw new ApiError(404, '数据集不存在')
+  if (REAL_DS_IDS.has(id)) {
+    await fetch(`/real-api/datasets/${id}`, { method: 'DELETE' }).catch(() => {})
+  }
   db.datasets.splice(idx, 1)
   const removedBenches = new Set<string>()
   for (let i = db.benchmarks.length - 1; i >= 0; i--) {
@@ -1141,9 +1340,19 @@ export async function listReviewQueue(): Promise<ReviewItem[]> {
 
 // POST /api/admin/reviews/{algoId}/{version}
 export async function reviewVersion(algoId: string, version: string, approve: boolean, note: string): Promise<void> {
-  await delay(400)
+  await delay(300)
   const v = db.algorithms.find((a) => a.id === algoId)?.versions.find((x) => x.version === version)
   if (!v) throw new ApiError(404, '版本不存在')
+  if (approve && REAL_ALGO_IDS.has(algoId)) {
+    const fd = new FormData()
+    fd.append('version', version)
+    const resp = await fetch(`/real-api/algorithms/${algoId}/approve`, { method: 'POST', body: fd })
+    if (resp.ok) {
+      const updated = (await resp.json()) as AlgoVersion
+      Object.assign(v, updated, { reviewNote: note })
+      return
+    }
+  }
   v.status = approve ? 'building' : 'rejected'
   v.reviewNote = note
   if (approve) {

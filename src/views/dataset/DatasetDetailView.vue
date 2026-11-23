@@ -162,10 +162,20 @@ function download(p: SplitName) {
                 <span class="font-medium">训练集预览</span>
                 <button class="cursor-pointer text-xs text-brand-600 hover:underline" @click="setTab('train')">查看训练集 →</button>
               </div>
-              <div v-if="ds.realPreview?.train?.length" class="grid grid-cols-3 gap-1 p-1 sm:grid-cols-6">
-                <div v-for="item in ds.realPreview.train" :key="item.file_name" class="relative overflow-hidden rounded-md bg-gray-100 dark:bg-gray-900">
-                  <img :src="item.url" :alt="item.label" class="block aspect-[4/3] w-full object-cover" loading="lazy" />
-                  <span class="pointer-events-none absolute top-1 left-1 rounded bg-gray-900/75 px-1.5 py-0.5 text-[11px] font-medium text-white">{{ item.label }}</span>
+              <div v-if="ds.realPreview?.train?.length" class="grid gap-1.5 p-1.5" :class="ds.task === 'ocr' ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-3 sm:grid-cols-6'">
+                <div v-for="item in ds.realPreview.train" :key="item.file_name" class="relative overflow-hidden rounded-md border border-gray-100 bg-gray-100 dark:border-gray-800 dark:bg-gray-900">
+                  <template v-if="ds.task === 'ocr'">
+                    <div class="flex h-16 items-center justify-center bg-white p-1.5 dark:bg-gray-950">
+                      <img :src="item.url" :alt="item.label" class="max-h-full max-w-full object-contain" loading="lazy" />
+                    </div>
+                    <div class="mono truncate border-t border-gray-100 bg-gray-50 px-2 py-1 text-[11px] font-medium text-gray-800 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200" :title="item.label">
+                      {{ item.label }}
+                    </div>
+                  </template>
+                  <template v-else>
+                    <img :src="item.url" :alt="item.label" class="block aspect-[4/3] w-full object-cover" loading="lazy" />
+                    <span class="pointer-events-none absolute top-1 left-1 max-w-[calc(100%-0.5rem)] truncate rounded bg-gray-900/75 px-1.5 py-0.5 text-[11px] font-medium text-white">{{ item.label }}</span>
+                  </template>
                 </div>
               </div>
               <div v-else class="grid grid-cols-3 gap-1 p-1 sm:grid-cols-6">
@@ -275,18 +285,29 @@ function download(p: SplitName) {
               <button class="btn-default py-1 text-xs" @click="showAnn = !showAnn"><component :is="showAnn ? Eye : EyeOff" class="size-3.5" />{{ showAnn ? '叠加标注' : '原图' }}</button>
               <span class="text-xs text-gray-500">点击查看该样本在 labels.csv 中的行</span>
             </div>
-            <div v-if="isRealDataset && realRows.length" class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
+            <div v-if="isRealDataset && realRows.length" class="grid gap-2" :class="ds.task === 'ocr' ? 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4' : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6'">
               <button
                 v-for="(item, idx) in realRows.slice(0, count)"
                 :key="item.file_name"
                 class="group cursor-pointer overflow-hidden rounded-lg border border-gray-100 text-left dark:border-gray-800"
                 @click="zoom = idx + 1"
               >
-                <div class="relative overflow-hidden bg-gray-100 dark:bg-gray-900">
-                  <img :src="item.url" :alt="item.label" class="block aspect-[4/3] w-full object-cover transition group-hover:opacity-90" loading="lazy" />
-                  <span v-if="showAnn" class="pointer-events-none absolute top-1.5 left-1.5 rounded bg-gray-900/75 px-1.5 py-0.5 text-[11px] font-medium text-white">{{ item.label }}</span>
-                </div>
-                <div class="mono truncate px-2 py-1 text-[11px] text-gray-500">{{ item.file_name.replace('images/', '') }}</div>
+                <template v-if="ds.task === 'ocr'">
+                  <div class="flex h-20 items-center justify-center bg-white p-2 dark:bg-gray-950">
+                    <img :src="item.url" :alt="item.label" class="max-h-full max-w-full object-contain transition group-hover:opacity-90" loading="lazy" />
+                  </div>
+                  <div v-if="showAnn" class="mono truncate border-t border-gray-100 bg-gray-50 px-2 py-1 text-xs font-medium text-gray-800 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200" :title="item.label">
+                    GT: {{ item.label }}
+                  </div>
+                  <div class="mono truncate px-2 py-1 text-[11px] text-gray-400">{{ item.file_name.replace('images/', '') }}</div>
+                </template>
+                <template v-else>
+                  <div class="relative overflow-hidden bg-gray-100 dark:bg-gray-900">
+                    <img :src="item.url" :alt="item.label" class="block aspect-[4/3] w-full object-cover transition group-hover:opacity-90" loading="lazy" />
+                    <span v-if="showAnn" class="pointer-events-none absolute top-1.5 left-1.5 max-w-[calc(100%-0.75rem)] truncate rounded bg-gray-900/75 px-1.5 py-0.5 text-[11px] font-medium text-white">{{ item.label }}</span>
+                  </div>
+                  <div class="mono truncate px-2 py-1 text-[11px] text-gray-500">{{ item.file_name.replace('images/', '') }}</div>
+                </template>
               </button>
             </div>
             <div v-else class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
@@ -334,7 +355,7 @@ function download(p: SplitName) {
 
       <Modal v-model:open="zoomOpen" :title="zoomReal ? zoomReal.file_name : zoom !== null ? fileNameOf(partName, zoom, spec?.dataExt) : ''" width="max-w-3xl">
         <div v-if="zoom !== null && part" class="space-y-4">
-          <div class="overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-900">
+          <div class="overflow-hidden rounded-lg" :class="ds.task === 'ocr' ? 'flex min-h-[120px] items-center justify-center border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-950' : 'bg-gray-100 dark:bg-gray-900'">
             <img v-if="zoomReal" :src="zoomReal.url" :alt="zoomReal.label" class="mx-auto max-h-[60vh] w-auto object-contain" />
             <SynthImage v-else :seed="seedOf(zoom)" :task="ds.task" :classes="ds.classes" :sample-images="ds.sampleImages" annotate :width="960" :height="540" />
           </div>

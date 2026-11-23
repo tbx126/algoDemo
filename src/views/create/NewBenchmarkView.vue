@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Plus, Trash2, Trophy } from 'lucide-vue-next'
+import { Download, Plus, Sparkles, Trash2, Trophy } from 'lucide-vue-next'
 import { ApiError, createBenchmark, listDatasets, listEvaluators } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
@@ -19,9 +19,14 @@ const { data: evList } = useAsync(() => listEvaluators())
 
 const PRESETS: Record<string, MetricDef[]> = {
   'image-classification': [
-    { key: 'top1', label: 'Top-1', higherIsBetter: true, unit: '%', primary: true },
-    { key: 'top5', label: 'Top-5', higherIsBetter: true, unit: '%' },
-    { key: 'macro_f1', label: 'Macro-F1', higherIsBetter: true },
+    { key: 'top1', label: '准确率', higherIsBetter: true, unit: '%', primary: true },
+    { key: 'f1', label: 'Macro-F1', higherIsBetter: true, unit: '%' },
+    { key: 'precision', label: '精确率', higherIsBetter: true, unit: '%' },
+    { key: 'recall', label: '召回率', higherIsBetter: true, unit: '%' },
+  ],
+  'image-dehazing': [
+    { key: 'psnr', label: 'PSNR', higherIsBetter: true, unit: 'dB', primary: true },
+    { key: 'ssim', label: 'SSIM', higherIsBetter: true, unit: '' },
   ],
   'object-detection': [
     { key: 'map', label: 'mAP', higherIsBetter: true, unit: '%', primary: true },
@@ -31,6 +36,11 @@ const PRESETS: Record<string, MetricDef[]> = {
   'semantic-segmentation': [
     { key: 'miou', label: 'mIoU', higherIsBetter: true, unit: '%', primary: true },
     { key: 'pixel_acc', label: '像素准确率', higherIsBetter: true, unit: '%' },
+  ],
+  ocr: [
+    { key: 'char_acc', label: '字符准确率', higherIsBetter: true, unit: '%', primary: true },
+    { key: 'exact_acc', label: '整行准确率', higherIsBetter: true, unit: '%' },
+    { key: 'cer', label: '字符错误率 CER', higherIsBetter: false, unit: '%' },
   ],
 }
 const PERF: MetricDef[] = [
@@ -46,7 +56,7 @@ const f = reactive({
   description: '',
   evaluatorKind: 'builtin' as 'builtin' | 'custom',
   evaluatorId: '',
-  script: null as { name: string; size: number } | null,
+  script: null as { name: string; size: number; file?: File } | null,
   metrics: [] as MetricDef[],
   perf: true,
 })
@@ -74,7 +84,10 @@ const evaluator = computed(() =>
   selectedEvaluator.value
     ? { name: selectedEvaluator.value.id, version: selectedEvaluator.value.version }
     : f.evaluatorKind === 'builtin'
-      ? { name: `builtin-${ds.value?.task === 'image-classification' ? 'classification' : ds.value?.task === 'object-detection' ? 'coco-detection' : 'semantic-seg'}`, version: 'v2.0.1' }
+      ? {
+          name: `builtin-${ds.value?.task === 'image-classification' ? 'classification' : ds.value?.task === 'image-dehazing' ? 'dehaze-psnr-ssim' : ds.value?.task === 'ocr' ? 'ocr-cer' : ds.value?.task === 'object-detection' ? 'coco-detection' : 'semantic-seg'}`,
+          version: 'v2.0.1',
+        }
       : { name: `${user.value.orgId ?? 'Admin'}/custom-evaluator`, version: 'v0.1.0' },
 )
 const primaryKey = computed({
@@ -99,8 +112,9 @@ async function submit() {
       evaluatorVersion: evaluator.value.version,
       metrics: [...f.metrics, ...(f.perf ? PERF : [])],
       org: ds.value.org,
+      evaluatorScript: f.evaluatorKind === 'custom' ? f.script?.file : undefined,
     })
-    toast('评测基准已创建')
+    toast('评测基准已创建（可直接发起真实评测）')
     router.push(`/benchmarks/${b.id}`)
   } catch (e) {
     toast(e instanceof ApiError ? e.message : '创建失败', 'error')
@@ -108,12 +122,31 @@ async function submit() {
     submitting.value = false
   }
 }
+
+function fillExample() {
+  const readyDs = (dsList.value?.items ?? []).find((d) => d.test)
+  if (!readyDs) return toast('请先上传一个包含测试集的数据集', 'error')
+  const suffix = String(Date.now()).slice(-4)
+  f.datasetId = readyDs.id
+  f.datasetVersion = readyDs.test!.versions[0].version
+  f.name = `${readyDs.name.slice(0, 24)}-bench-${suffix}`
+  f.displayName = `${readyDs.name} 标准评测基准`
+  f.description = `绑定 ${readyDs.id} 测试集 ${f.datasetVersion} 的标准化真实评测基准。`
+  toast('已一键填充评测基准示例，可直接提交创建')
+}
 </script>
 
 <template>
   <div class="container-page max-w-3xl pt-8">
-    <h1 class="flex items-center gap-2 text-2xl font-semibold text-gray-900 dark:text-white"><Trophy class="size-6 text-amber-500" />新建评测基准</h1>
-    <p class="mt-1 text-sm text-gray-500">绑定一个数据集测试集的具体版本 + 评测器版本 + 指标配置。创建后规则不可修改，如需变更请新建基准。</p>
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div class="min-w-0 flex-1">
+        <h1 class="flex items-center gap-2 text-2xl font-semibold text-gray-900 dark:text-white"><Trophy class="size-6 text-amber-500" />新建评测基准</h1>
+        <p class="mt-1 text-sm text-gray-500">绑定一个真实数据集测试集版本 + 内置/自定义评测器 + 指标配置。创建后即可立即对任意同任务算法发起真实评测。</p>
+      </div>
+      <button v-if="can.createBenchmark" type="button" class="btn-default shrink-0" @click="fillExample">
+        <Sparkles class="size-4 text-amber-500" />一键填写示例基准
+      </button>
+    </div>
 
     <StateView v-if="!can.createBenchmark" :error="{ status: 403, message: '仅管理员可以创建评测基准' }" />
     <StateView v-else :loading="!dsList">
@@ -165,8 +198,14 @@ async function submit() {
               <span><span class="block font-medium">自定义评测器</span><span class="text-xs text-gray-500">上传评测脚本，在隔离容器中运行</span></span>
             </label>
           </div>
-          <div v-if="!selectedEvaluator && f.evaluatorKind === 'custom'" class="mt-3">
-            <FakeUpload v-model="f.script" accept=".zip,.py" label="上传评测器代码包" hint="实现 evaluate(predictions, ground_truth) -> dict" />
+          <div v-if="!selectedEvaluator && f.evaluatorKind === 'custom'" class="mt-3 space-y-2">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-gray-500">需实现 <code class="mono">evaluate(predictions, ground_truth) -&gt; dict</code></span>
+              <a href="/real-api/templates/evaluator" class="inline-flex items-center gap-1 text-brand-600 hover:underline dark:text-brand-400">
+                <Download class="size-3.5" />下载 evaluator.py 模板
+              </a>
+            </div>
+            <FakeUpload v-model="f.script" accept=".py" label="上传自定义评测器脚本 (evaluator.py)" hint="上传后由后端真实加载执行评测" />
           </div>
           <p class="hint">将使用 <code class="mono">{{ evaluator.name }}@{{ evaluator.version }}</code></p>
         </div>

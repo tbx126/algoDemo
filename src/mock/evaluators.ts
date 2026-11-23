@@ -9,11 +9,11 @@ export const evaluators: Evaluator[] = [
     kind: 'builtin',
     task: 'image-classification',
     status: 'ready',
-    description: '面向单标签图像分类任务（如猫狗识别），在隐藏测试集上执行批量推理并计算 Top-1 准确率、Macro F1、精确率与召回率。',
+    description: '面向单标签图像分类任务（如猫狗识别），在隐藏测试集上执行批量推理并计算准确率、Macro F1、精确率与召回率。',
     entrypoint: 'backend/model_registry.py:evaluate_version_on_test',
     runtime: 'Python 3.12 · PyTorch 2.6+cu124 · CUDA 12.4',
     supportedMetrics: [
-      { key: 'top1', label: 'Top-1 准确率', higherIsBetter: true, unit: '%', primary: true },
+      { key: 'top1', label: '准确率', higherIsBetter: true, unit: '%', primary: true },
       { key: 'f1', label: 'Macro F1', higherIsBetter: true, unit: '%' },
       { key: 'precision', label: '精确率', higherIsBetter: true, unit: '%' },
       { key: 'recall', label: '召回率', higherIsBetter: true, unit: '%' },

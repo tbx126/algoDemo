@@ -43,10 +43,37 @@ from dehaze_registry import (
     evaluate_dehaze_on_test,
     infer_dehaze_bytes,
 )
+from custom_registry import (
+    CUSTOM_DATA_ROOT,
+    CUSTOM_MODELS_ROOT,
+    _CUSTOM_LOCK,
+    build_template_algorithm_zip,
+    build_template_dataset_zip,
+    build_template_evaluator_py,
+    create_custom_benchmark,
+    infer_custom_algorithm,
+    load_custom_state,
+    read_custom_dataset_rows,
+    run_unified_evaluation,
+    safe_slug,
+    save_custom_algorithm,
+    save_custom_dataset_part,
+    save_custom_state,
+    validate_algorithm_package,
+    validate_dataset_zip,
+)
+from studio_engine import (
+    generate_pipeline_predictor_code,
+    publish_studio_pipeline,
+    run_studio_batch_eval,
+    run_studio_sample,
+)
 
 STATE_FILE = ROOT / "state" / "real_state.json"
 META_FILE = DATA_DIR / "meta.json"
 DEHAZE_META_FILE = DEHAZE_DATA_DIR / "meta.json"
+OCR_DATA_DIR = ROOT / "data" / "sroie-ocr-dataset"
+OCR_META_FILE = OCR_DATA_DIR / "meta.json"
 TZ_CN = timezone(timedelta(hours=8))
 
 app = FastAPI(title="AlgoHub Real Backend", version="0.1.0")
@@ -162,7 +189,7 @@ def build_real_algorithm(state: dict) -> dict:
         "task": "image-classification",
         "business": "other",
         "framework": "PyTorch",
-        "tags": ["猫狗识别", "图像分类", "基线算法", "真实部署"],
+        "tags": ["真实部署", "基线算法"],
         "summary": "真实 PyTorch 猫狗二分类算法，包含 ResNet-18 (v1.0.0)、ResNet-50 (v2.0.0)、ConvNeXt-Tiny (v3.0.0) 三个真实训练版本，支持实时推理与真实评测。",
         "readme": readme,
         "likes": 12,
@@ -286,7 +313,7 @@ def build_real_benchmark(meta: dict) -> dict:
         "id": "cat-dog-cls-bench",
         "name": "cat-dog-cls-bench",
         "displayName": "猫狗图像识别评测基准",
-        "description": f"基于真实数据集 Admin/cat-dog-dataset 测试集 v1.0（{te['files']} 张真实猫狗照片），执行真实 PyTorch 推理并计算 Top-1 准确率与 Macro F1。",
+        "description": f"基于真实数据集 Admin/cat-dog-dataset 测试集 v1.0（{te['files']} 张真实猫狗照片），执行真实 PyTorch 推理并计算准确率与 Macro F1。",
         "task": "image-classification",
         "datasetId": "Admin/cat-dog-dataset",
         "datasetVersion": "v1.0",
@@ -294,7 +321,7 @@ def build_real_benchmark(meta: dict) -> dict:
         "evaluator": "pytorch-cls-evaluator",
         "evaluatorVersion": "v1.2.0",
         "metrics": [
-            {"key": "top1", "label": "Top-1 准确率", "higherIsBetter": True, "unit": "%", "primary": True},
+            {"key": "top1", "label": "准确率", "higherIsBetter": True, "unit": "%", "primary": True},
             {"key": "f1", "label": "Macro F1", "higherIsBetter": True, "unit": "%"},
             {"key": "precision", "label": "精确率", "higherIsBetter": True, "unit": "%"},
             {"key": "recall", "label": "召回率", "higherIsBetter": True, "unit": "%"},
@@ -323,7 +350,7 @@ def build_random_algorithm(state: dict) -> dict:
         "task": "custom",
         "business": "other",
         "framework": "NumPy",
-        "tags": ["随机基线", "全任务通用", "对照实验"],
+        "tags": ["基线算法"],
         "summary": "全任务通用随机基线算法：无论输入任何内容，按目标任务类型独立随机生成对应格式的输出，可参与任意任务类型的评测基准作为下界对照。",
         "readme": """# 全任务通用随机基线（Admin/random）
 
@@ -604,6 +631,152 @@ def build_dehaze_benchmark(dmeta: dict) -> dict:
     }
 
 
+def load_ocr_meta() -> dict | None:
+    if not OCR_META_FILE.exists():
+        return None
+    return json.loads(OCR_META_FILE.read_text(encoding="utf-8"))
+
+
+def read_ocr_part_rows(part: Literal["train", "test"], limit: int | None = None) -> list[dict]:
+    csv_path = OCR_DATA_DIR / part / "labels.csv"
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail=f"OCR 数据集 {part} 不存在")
+    rows: list[dict] = []
+    with csv_path.open("r", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            fn = row["file_name"]
+            short = fn.split("/")[-1]
+            text_gt = row["text"]
+            cat = row.get("category", "")
+            src_receipt = row.get("source_receipt", "")
+            rows.append({
+                "file_name": fn,
+                "label": text_gt,
+                "url": f"/real-api/datasets/Admin/sroie-ocr-dataset/files/{part}/{short}",
+                "row": [fn, text_gt, cat, src_receipt],
+            })
+            if limit is not None and len(rows) >= limit:
+                break
+    return rows
+
+
+def build_ocr_dataset(ometa: dict) -> dict:
+    tr = ometa["train"]
+    te = ometa["test"]
+    total_imgs = tr["files"] + te["files"]
+    total_receipts = tr.get("receipts", 0) + te.get("receipts", 0)
+    train_pool = read_ocr_part_rows("train", limit=60)
+    test_pool = read_ocr_part_rows("test", limit=30)
+
+    # 挑选文字清晰、长度适中且覆盖多种语义类别的样本作为首屏预览
+    def pick_preview(pool: list[dict], k: int = 6) -> list[dict]:
+        chosen: list[dict] = []
+        seen_cats: set[str] = set()
+        for r in pool:
+            txt = r["label"]
+            cat = r["row"][2] if len(r.get("row", [])) > 2 else ""
+            if 4 <= len(txt) <= 24 and cat not in seen_cats:
+                chosen.append(r)
+                seen_cats.add(cat)
+                if len(chosen) >= k:
+                    return chosen
+        for r in pool:
+            if r not in chosen and 3 <= len(r["label"]) <= 28:
+                chosen.append(r)
+                if len(chosen) >= k:
+                    return chosen
+        return pool[:k]
+
+    train_preview = pick_preview(train_pool, 6)
+    test_preview = pick_preview(test_pool, 6)
+
+    readme = f"""# sroie-ocr-dataset（ICDAR-2019 SROIE 真实票据 OCR 文本行数据集）
+
+来源于官方 **ICDAR-2019 SROIE**（Scanned Receipts OCR and Information Extraction）公开竞赛真实扫描票据集（共 {total_receipts} 张高分辨率扫描票据）。逐行按人工标注四点坐标裁剪出真实文本行图像（含 2px 上下文留白），经 Pillow 完整性校验、极小噪点过滤与图片 SHA-256 严格去重后，共保留 **{total_imgs:,} 张真实 OCR 文本行图片及其精确 Ground Truth 文字标注**。
+
+训练与测试分片严格按**整张票据维度 80% / 20% 切分**，确保同一张票据不会同时出现在训练集与测试集中，零数据泄漏。
+
+## 组成
+
+| 部分 | 图片数 | 原始票据数 | 大小 | 说明 |
+| --- | --- | --- | --- | --- |
+| 训练集 (`train`) | {tr["files"]:,} | {tr.get("receipts", "-")} | {tr["sizeBytes"] / (1024 * 1024):.2f} MB | 所有账号可在线浏览与真实打包下载 |
+| 测试集 (`test`) | {te["files"]:,} | {te.get("receipts", "-")} | {te["sizeBytes"] / (1024 * 1024):.2f} MB | **仅管理员可查看与下载**，用于 OCR 算法真实评测（CER / 整行准确率） |
+
+## 文件结构
+
+```
+train/
+├── images/          # 真实裁剪票据文本行 JPEG 图片
+└── labels.csv       # file_name,text,category,source_receipt
+test/
+├── images/          # 真实裁剪票据文本行 JPEG 图片
+└── labels.csv       # file_name,text,category,source_receipt
+```
+
+## labels.csv
+
+一张裁剪文本行图片一行，`text` 为人工精标文字真值（Ground Truth），`category` 按文本内容分为 `数字与金额`、`日期与编号`、`文本与抬头` 三类，`source_receipt` 记录所属原始扫描票据编号。
+
+```
+file_name,text,category,source_receipt
+```
+"""
+
+    return {
+        "id": "Admin/sroie-ocr-dataset",
+        "org": "Admin",
+        "name": "sroie-ocr-dataset",
+        "task": "ocr",
+        "tags": ["OCR", "ICDAR-2019", "票据识别", "真实数据集"],
+        "summary": f"ICDAR-2019 SROIE 真实扫描票据 OCR 文本行数据集（训练集 {tr['files']:,} 张 + 测试集 {te['files']:,} 张），含人工精标文字真值，支持在线预览与 ZIP 下载。",
+        "readme": readme,
+        "classes": ["数字与金额", "日期与编号", "文本与抬头"],
+        "train": {
+            "name": "train",
+            "columns": ["file_name", "text", "category", "source_receipt"],
+            "versions": [
+                {
+                    "version": "v1.0",
+                    "createdAt": "2026-11-22T23:35:00+08:00",
+                    "createdBy": "admin",
+                    "contentHash": tr["contentHash"],
+                    "sizeBytes": tr["sizeBytes"],
+                    "note": f"ICDAR-2019 SROIE 真实文本行训练集（{tr['files']:,} 张，来自 {tr.get('receipts', 0)} 张扫描票据）",
+                    "files": tr["files"],
+                    "rows": tr["rows"],
+                }
+            ],
+            "classCounts": tr.get("classCounts", {}),
+        },
+        "test": {
+            "name": "test",
+            "columns": ["file_name", "text", "category", "source_receipt"],
+            "versions": [
+                {
+                    "version": "v1.0",
+                    "createdAt": "2026-11-22T23:36:00+08:00",
+                    "createdBy": "admin",
+                    "contentHash": te["contentHash"],
+                    "sizeBytes": te["sizeBytes"],
+                    "note": f"ICDAR-2019 SROIE 真实文本行测试集（{te['files']:,} 张，按票据维度与训练集零重叠）",
+                    "files": te["files"],
+                    "rows": te["rows"],
+                }
+            ],
+            "classCounts": te.get("classCounts", {}),
+        },
+        "likes": 11,
+        "downloads": 15,
+        "updatedAt": "2026-11-22T23:36:00+08:00",
+        "previewSeed": 3000,
+        "realPreview": {
+            "train": train_preview,
+            "test": test_preview,
+        },
+    }
+
+
 @app.get("/real-api/bootstrap")
 def bootstrap():
     with _STATE_LOCK:
@@ -611,6 +784,7 @@ def bootstrap():
         dstate = load_dehaze_state()
     meta = load_dataset_meta()
     dmeta = load_dehaze_meta()
+    ometa = load_ocr_meta()
     cat_dog = build_real_algorithm(state)
     rand_algo = build_random_algorithm(state)
     cat_dog_ds = build_real_dataset(meta)
@@ -627,7 +801,17 @@ def bootstrap():
         benchmarks.append(build_dehaze_benchmark(dmeta))
         evals.extend(dstate["evals"])
 
+    if ometa:
+        datasets.append(build_ocr_dataset(ometa))
+
     algorithms.append(rand_algo)
+
+    with _CUSTOM_LOCK:
+        cstate = load_custom_state()
+    algorithms = list(cstate["algorithms"]) + algorithms
+    datasets = list(cstate["datasets"]) + datasets
+    benchmarks = list(cstate["benchmarks"]) + benchmarks
+    evals = list(cstate["evals"]) + evals
 
     return {
         "algorithm": cat_dog,
@@ -637,6 +821,9 @@ def bootstrap():
         "benchmark": cat_dog_bench,
         "benchmarks": benchmarks,
         "evals": evals,
+        "realAlgoIds": [a["id"] for a in algorithms],
+        "realDatasetIds": [d["id"] for d in datasets],
+        "realBenchmarkIds": [b["id"] for b in benchmarks],
         "warmContainers": warm_containers(),
     }
 
@@ -742,6 +929,52 @@ def download_dehaze_dataset_part(part: Literal["train", "test"]):
     )
 
 
+@app.get("/real-api/datasets/Admin/sroie-ocr-dataset/part/{part}")
+def get_ocr_dataset_part(part: Literal["train", "test"], limit: int = 200):
+    ometa = load_ocr_meta()
+    if not ometa:
+        raise HTTPException(status_code=503, detail="OCR 数据集尚未初始化，请先运行 prepare_ocr_dataset.py")
+    rows = read_ocr_part_rows(part, limit=max(1, min(limit, 500)))
+    return {
+        "part": part,
+        "columns": ["file_name", "text", "category", "source_receipt"],
+        "total": ometa[part]["files"],
+        "rows": rows,
+    }
+
+
+@app.get("/real-api/datasets/Admin/sroie-ocr-dataset/files/{part}/{filename}")
+def get_ocr_dataset_file(part: Literal["train", "test"], filename: str):
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="非法文件名")
+    path = OCR_DATA_DIR / part / "images" / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="图片不存在")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/real-api/datasets/Admin/sroie-ocr-dataset/download/{part}")
+def download_ocr_dataset_part(part: Literal["train", "test"]):
+    part_dir = OCR_DATA_DIR / part
+    if not part_dir.exists():
+        raise HTTPException(status_code=404, detail="OCR 数据集分片不存在")
+    zip_path = OCR_DATA_DIR / f"sroie-ocr-dataset-{part}-v1.0.zip"
+    if not zip_path.exists():
+        tmp = zip_path.with_suffix(".zip.tmp")
+        with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_STORED) as zf:
+            csv_path = part_dir / "labels.csv"
+            if csv_path.exists():
+                zf.write(csv_path, arcname=f"{part}/labels.csv")
+            for img in sorted((part_dir / "images").glob("*.jpg")):
+                zf.write(img, arcname=f"{part}/images/{img.name}")
+        tmp.replace(zip_path)
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"sroie-ocr-dataset-{part}-v1.0.zip",
+    )
+
+
 @app.post("/real-api/algorithms/Admin/random/infer")
 async def infer_random_endpoint(
     task: str = Form("image-classification"),
@@ -789,7 +1022,7 @@ async def infer_dehaze_algo(
 ):
     algo_id = f"Admin/{algo_name}"
     if algo_id not in DEHAZE_ALGOS:
-        raise HTTPException(status_code=404, detail=f"不支持的去雾算法：{algo_id}")
+        return await infer_custom_algorithm_endpoint("Admin", algo_name, version=version, file=file, sample_path=sample_path)
     if file is not None:
         raw = await file.read()
     elif sample_path:
@@ -990,28 +1223,164 @@ def trigger_real_eval(req: EvalRequest):
         threading.Thread(target=_run_dehaze_eval_bg, args=(eval_id, req.algorithmId), daemon=True).start()
         return run
 
-    if req.algorithmId not in ("Admin/cat-dog-classifier", "Admin/random") or req.benchmarkId != "cat-dog-cls-bench":
-        raise HTTPException(status_code=400, detail="当前真实评测仅支持 cat-dog-cls-bench 或 dehaze-bench")
+    if req.algorithmId in ("Admin/cat-dog-classifier", "Admin/random") and req.benchmarkId == "cat-dog-cls-bench":
+        with _STATE_LOCK:
+            st = load_state()
+            if req.algorithmId == "Admin/random":
+                vrec = {
+                    "imageDigest": "sha256:random0000000000000000000000000000000000000000000000000000000001",
+                    "weightsHash": "sha256:none000000000000000000000000000000000000000000000000000000000000",
+                }
+                params = {"mode": "uniform_random"}
+                hw = "CPU · Python random"
+            else:
+                if req.algoVersion not in VERSION_SPECS:
+                    raise HTTPException(status_code=400, detail=f"未知版本：{req.algoVersion}")
+                vrec = next((v for v in st["versions"] if v["version"] == req.algoVersion), None)
+                if not vrec:
+                    raise HTTPException(status_code=404, detail="版本不存在")
+                params = {"input_size": VERSION_SPECS[req.algoVersion].input_size, "batch_size": 64, "fp16": True}
+                hw = hardware_label()
 
-    with _STATE_LOCK:
-        st = load_state()
-        if req.algorithmId == "Admin/random":
-            vrec = {
-                "imageDigest": "sha256:random0000000000000000000000000000000000000000000000000000000001",
-                "weightsHash": "sha256:none000000000000000000000000000000000000000000000000000000000000",
+            eval_id = f"ev-real-{1001 + len(st['evals'])}"
+            now = iso_now()
+            run = {
+                "id": eval_id,
+                "algorithmId": req.algorithmId,
+                "algoVersion": req.algoVersion,
+                "benchmarkId": req.benchmarkId,
+                "status": "queued",
+                "progress": 0,
+                "submittedBy": req.submittedBy,
+                "submittedAt": now,
+                "metrics": {},
+                "imageDigest": vrec["imageDigest"],
+                "weightsHash": vrec["weightsHash"],
+                "evaluatorVersion": "v1.2.0",
+                "params": params,
+                "hardware": hw,
+                "isLatestValid": False,
+                "logs": [f"[scheduler] 真实评测任务 {eval_id} 已入队，目标 {req.algorithmId} {req.algoVersion}"],
             }
-            params = {"mode": "uniform_random"}
-            hw = "CPU · Python random"
-        else:
-            if req.algoVersion not in VERSION_SPECS:
-                raise HTTPException(status_code=400, detail=f"未知版本：{req.algoVersion}")
-            vrec = next((v for v in st["versions"] if v["version"] == req.algoVersion), None)
-            if not vrec:
-                raise HTTPException(status_code=404, detail="版本不存在")
-            params = {"input_size": VERSION_SPECS[req.algoVersion].input_size, "batch_size": 64, "fp16": True}
-            hw = hardware_label()
+            st["evals"].insert(0, run)
+            save_state(st)
 
-        eval_id = f"ev-real-{1001 + len(st['evals'])}"
+        threading.Thread(target=_run_eval_bg, args=(eval_id, req.algorithmId, req.algoVersion), daemon=True).start()
+        return run
+
+    # 统一真实评测通道：支持任意内置/用户上传算法 × 任意内置/用户创建评测基准
+    return _trigger_unified_eval(req)
+
+
+def _find_any_benchmark(bench_id: str) -> dict | None:
+    if bench_id == "cat-dog-cls-bench":
+        return build_real_benchmark(load_dataset_meta())
+    if bench_id == "dehaze-bench":
+        dm = load_dehaze_meta()
+        return build_dehaze_benchmark(dm) if dm else None
+    with _CUSTOM_LOCK:
+        cst = load_custom_state()
+    return next((b for b in cst["benchmarks"] if b["id"] == bench_id), None)
+
+
+def _find_any_algo_version(algo_id: str, version: str) -> tuple[dict | None, dict | None]:
+    if algo_id == "Admin/cat-dog-classifier":
+        st = load_state()
+        return {"id": algo_id, "task": "image-classification"}, next((v for v in st["versions"] if v["version"] == version), None)
+    if algo_id == "Admin/random":
+        return {"id": algo_id, "task": "custom"}, {
+            "version": version,
+            "imageDigest": "sha256:random0000000000000000000000000000000000000000000000000000000001",
+            "weightsHash": "sha256:none000000000000000000000000000000000000000000000000000000000000",
+        }
+    if algo_id in DEHAZE_ALGOS:
+        dst = load_dehaze_state()
+        vers = (dst or {}).get("algorithms", {}).get(algo_id, [])
+        return {"id": algo_id, "task": "image-dehazing"}, next((v for v in vers if v["version"] == version), None)
+    with _CUSTOM_LOCK:
+        cst = load_custom_state()
+    algo = next((a for a in cst["algorithms"] if a["id"] == algo_id), None)
+    if not algo:
+        return None, None
+    return algo, next((v for v in algo["versions"] if v["version"] == version), None)
+
+
+def _run_unified_eval_bg(eval_id: str, algorithm_id: str, version: str, bench: dict, params: dict):
+    def on_progress(pct: int, msg: str | None):
+        with _CUSTOM_LOCK:
+            cst = load_custom_state()
+            run = next((r for r in cst["evals"] if r["id"] == eval_id), None)
+            if not run:
+                return
+            run["progress"] = pct
+            if msg:
+                run["logs"].append(msg)
+            save_custom_state(cst)
+
+    try:
+        with _CUSTOM_LOCK:
+            cst = load_custom_state()
+            run = next((r for r in cst["evals"] if r["id"] == eval_id), None)
+            if run:
+                run["status"] = "running"
+                run["startedAt"] = iso_now()
+                run["logs"].append(f"[scheduler] 开始在 {hardware_label()} 上执行标准化真实评测")
+                save_custom_state(cst)
+
+        res = run_unified_evaluation(algorithm_id, version, bench, params, on_progress=on_progress)
+
+        with _CUSTOM_LOCK:
+            cst = load_custom_state()
+            run = next((r for r in cst["evals"] if r["id"] == eval_id), None)
+            if run:
+                for other in cst["evals"]:
+                    if (
+                        other["id"] != eval_id
+                        and other["algorithmId"] == run["algorithmId"]
+                        and other["algoVersion"] == run["algoVersion"]
+                        and other["benchmarkId"] == run["benchmarkId"]
+                    ):
+                        other["isLatestValid"] = False
+                run["status"] = "succeeded"
+                run["progress"] = 100
+                run["finishedAt"] = iso_now()
+                run["metrics"] = res["metrics"]
+                run["durationSec"] = res["durationSec"]
+                run["peakGpuMemGB"] = res["peakGpuMemGB"]
+                run["latencyMs"] = res["latencyMs"]
+                run["hardware"] = res["hardware"]
+                run["isLatestValid"] = True
+                run["perClass"] = res["perClass"]
+                run["errorSamples"] = res["errorSamples"]
+                run["logs"].append(f"[done] 真实评测完成（{res['totalSamples']} 条样本，均耗 {res['latencyMs']} ms），已更新排行榜")
+                # 更新自定义算法 evalCount
+                ca = next((a for a in cst["algorithms"] if a["id"] == algorithm_id), None)
+                if ca:
+                    ca["evalCount"] = len([e for e in cst["evals"] if e["algorithmId"] == algorithm_id and e["status"] == "succeeded"])
+                save_custom_state(cst)
+    except Exception as exc:
+        with _CUSTOM_LOCK:
+            cst = load_custom_state()
+            run = next((r for r in cst["evals"] if r["id"] == eval_id), None)
+            if run:
+                run["status"] = "failed"
+                run["finishedAt"] = iso_now()
+                run["error"] = str(exc)
+                run["logs"].append(f"[error] 评测失败：{exc}")
+                save_custom_state(cst)
+
+
+def _trigger_unified_eval(req: EvalRequest) -> dict:
+    bench = _find_any_benchmark(req.benchmarkId)
+    if not bench:
+        raise HTTPException(status_code=404, detail=f"真实评测基准不存在：{req.benchmarkId}")
+    algo, vrec = _find_any_algo_version(req.algorithmId, req.algoVersion)
+    if not algo or not vrec:
+        raise HTTPException(status_code=404, detail=f"真实算法或版本不存在：{req.algorithmId}@{req.algoVersion}")
+
+    with _CUSTOM_LOCK:
+        cst = load_custom_state()
+        eval_id = f"ev-custom-{1001 + len(cst['evals'])}"
         now = iso_now()
         run = {
             "id": eval_id,
@@ -1023,18 +1392,22 @@ def trigger_real_eval(req: EvalRequest):
             "submittedBy": req.submittedBy,
             "submittedAt": now,
             "metrics": {},
-            "imageDigest": vrec["imageDigest"],
-            "weightsHash": vrec["weightsHash"],
-            "evaluatorVersion": "v1.2.0",
-            "params": params,
-            "hardware": hw,
+            "imageDigest": vrec.get("imageDigest", ""),
+            "weightsHash": vrec.get("weightsHash", ""),
+            "evaluatorVersion": bench.get("evaluatorVersion", "v1.0.0"),
+            "params": {},
+            "hardware": hardware_label(),
             "isLatestValid": False,
-            "logs": [f"[scheduler] 真实评测任务 {eval_id} 已入队，目标 {req.algorithmId} {req.algoVersion}"],
+            "logs": [f"[scheduler] 标准化真实评测任务 {eval_id} 已入队：{req.algorithmId} {req.algoVersion} × {req.benchmarkId}"],
         }
-        st["evals"].insert(0, run)
-        save_state(st)
+        cst["evals"].insert(0, run)
+        save_custom_state(cst)
 
-    threading.Thread(target=_run_eval_bg, args=(eval_id, req.algorithmId, req.algoVersion), daemon=True).start()
+    threading.Thread(
+        target=_run_unified_eval_bg,
+        args=(eval_id, req.algorithmId, req.algoVersion, bench, {}),
+        daemon=True,
+    ).start()
     return run
 
 
@@ -1045,11 +1418,18 @@ def list_real_evals():
         dst = load_dehaze_state()
         if dst:
             evals.extend(dst["evals"])
-        return evals
+    with _CUSTOM_LOCK:
+        evals = list(load_custom_state()["evals"]) + evals
+    return evals
 
 
 @app.get("/real-api/evals/{eval_id}")
 def get_real_eval(eval_id: str):
+    with _CUSTOM_LOCK:
+        cst = load_custom_state()
+    run = next((r for r in cst["evals"] if r["id"] == eval_id), None)
+    if run:
+        return run
     with _STATE_LOCK:
         st = load_state()
         dst = load_dehaze_state()
@@ -1059,3 +1439,317 @@ def get_real_eval(eval_id: str):
     if not run:
         raise HTTPException(status_code=404, detail="评测记录不存在")
     return run
+
+
+# ==================== 标准化模板下载 & 自助上传接口 ====================
+@app.get("/real-api/templates/dataset/{task}")
+def download_dataset_template(task: str, part: Literal["train", "test"] = "train"):
+    data = build_template_dataset_zip(task, part=part)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="template-{task}-{part}.zip"'},
+    )
+
+
+@app.get("/real-api/templates/algorithm/{task}")
+def download_algorithm_template(task: str):
+    data = build_template_algorithm_zip(task)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="template-algo-{task}.zip"'},
+    )
+
+
+@app.get("/real-api/templates/evaluator")
+def download_evaluator_template():
+    data = build_template_evaluator_py()
+    return Response(
+        content=data,
+        media_type="text/x-python",
+        headers={"Content-Disposition": 'attachment; filename="evaluator_template.py"'},
+    )
+
+
+@app.post("/real-api/datasets/validate")
+async def validate_custom_dataset_endpoint(
+    zip_file: UploadFile = File(...),
+    task: str = Form(...),
+    part: Literal["train", "test"] = Form("train"),
+    classes_json: str = Form("[]"),
+    dataset_id: str | None = Form(None),
+):
+    raw = await zip_file.read()
+    try:
+        classes = json.loads(classes_json) if classes_json else []
+    except Exception:
+        classes = []
+    expected_cols = None
+    if dataset_id:
+        with _CUSTOM_LOCK:
+            cst = load_custom_state()
+        ex = next((d for d in cst["datasets"] if d["id"] == dataset_id), None)
+        if ex:
+            other = ex["test"] if part == "train" else ex["train"]
+            if other:
+                expected_cols = other["columns"]
+    return validate_dataset_zip(raw, task, part, classes or None, expected_cols)
+
+
+@app.post("/real-api/datasets")
+async def create_custom_dataset_endpoint(
+    org: str = Form(...),
+    name: str = Form(...),
+    task: str = Form(...),
+    summary: str = Form(...),
+    classes_json: str = Form("[]"),
+    note: str = Form("首个版本"),
+    created_by: str = Form("admin"),
+    zip_file: UploadFile = File(...),
+):
+    raw = await zip_file.read()
+    try:
+        classes = json.loads(classes_json) if classes_json else []
+        return save_custom_dataset_part(
+            org=org,
+            name=name,
+            task=task,
+            part="train",
+            zip_bytes=raw,
+            note=note,
+            created_by=created_by,
+            summary=summary,
+            classes=classes,
+            is_new=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/real-api/datasets/{org}/{name}/{part}")
+async def upload_custom_dataset_part_endpoint(
+    org: str,
+    name: str,
+    part: Literal["train", "test"],
+    note: str = Form("增量更新"),
+    created_by: str = Form("admin"),
+    zip_file: UploadFile = File(...),
+):
+    raw = await zip_file.read()
+    try:
+        return save_custom_dataset_part(
+            org=org,
+            name=name,
+            task="",
+            part=part,
+            zip_bytes=raw,
+            note=note,
+            created_by=created_by,
+            is_new=False,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/real-api/datasets/{org}/{name}/part/{part}")
+def get_custom_dataset_part_endpoint(org: str, name: str, part: Literal["train", "test"], limit: int = 200):
+    ds_id = f"{org}/{name}"
+    with _CUSTOM_LOCK:
+        cst = load_custom_state()
+    ds = next((d for d in cst["datasets"] if d["id"] == ds_id), None)
+    if not ds or not ds.get(part):
+        raise HTTPException(status_code=404, detail="数据集或分片不存在")
+    rows = read_custom_dataset_rows(org, name, part, limit=max(1, min(limit, 500)))
+    return {
+        "part": part,
+        "columns": ds[part]["columns"],
+        "total": ds[part]["versions"][0]["files"],
+        "rows": rows,
+    }
+
+
+@app.get("/real-api/datasets/{org}/{name}/files/{part}/{filename}")
+def get_custom_dataset_file_endpoint(org: str, name: str, part: Literal["train", "test"], filename: str):
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="非法文件名")
+    part_dir = CUSTOM_DATA_ROOT / safe_slug(org, name) / part
+    for candidate in (part_dir / "images" / filename, part_dir / filename):
+        if candidate.exists():
+            return FileResponse(candidate, headers={"Cache-Control": "no-store"})
+    raise HTTPException(status_code=404, detail="文件不存在")
+
+
+@app.get("/real-api/datasets/{org}/{name}/download/{part}")
+def download_custom_dataset_part_endpoint(org: str, name: str, part: Literal["train", "test"]):
+    ds_root = CUSTOM_DATA_ROOT / safe_slug(org, name)
+    latest_zip = ds_root / f"{name}-{part}-latest.zip"
+    if not latest_zip.exists():
+        raise HTTPException(status_code=404, detail="压缩包不存在")
+    return FileResponse(latest_zip, media_type="application/zip", filename=f"{name}-{part}.zip")
+
+
+@app.delete("/real-api/datasets/{org}/{name}")
+def delete_custom_dataset_endpoint(org: str, name: str):
+    ds_id = f"{org}/{name}"
+    with _CUSTOM_LOCK:
+        cst = load_custom_state()
+        cst["datasets"] = [d for d in cst["datasets"] if d["id"] != ds_id]
+        removed_benches = {b["id"] for b in cst["benchmarks"] if b["datasetId"] == ds_id}
+        cst["benchmarks"] = [b for b in cst["benchmarks"] if b["datasetId"] != ds_id]
+        cst["evals"] = [e for e in cst["evals"] if e["benchmarkId"] not in removed_benches]
+        save_custom_state(cst)
+    return {"ok": True}
+
+
+@app.post("/real-api/algorithms/validate")
+async def validate_custom_algorithm_endpoint(
+    task: str = Form(...),
+    package_file: UploadFile = File(...),
+):
+    raw = await package_file.read()
+    return validate_algorithm_package(package_file.filename or "predictor.py", raw, task)
+
+
+@app.post("/real-api/algorithms")
+async def create_custom_algorithm_endpoint(
+    metadata_json: str = Form(...),
+    created_by: str = Form("admin"),
+    role: str = Form("admin"),
+    package_file: UploadFile = File(...),
+):
+    try:
+        meta = json.loads(metadata_json)
+        raw = await package_file.read()
+        return save_custom_algorithm(meta, package_file.filename or "predictor.py", raw, created_by=created_by, role=role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/real-api/algorithms/{org}/{name}/approve")
+def approve_custom_algorithm_endpoint(org: str, name: str, version: str = Form(...)):
+    algo_id = f"{org}/{name}"
+    with _CUSTOM_LOCK:
+        cst = load_custom_state()
+        algo = next((a for a in cst["algorithms"] if a["id"] == algo_id), None)
+        if not algo:
+            raise HTTPException(status_code=404, detail="算法不存在")
+        ver = next((v for v in algo["versions"] if v["version"] == version), None)
+        if not ver:
+            raise HTTPException(status_code=404, detail="版本不存在")
+        ver["status"] = "ready"
+        ver["buildLog"].append("[review] 管理员审核通过，版本已就绪")
+        save_custom_state(cst)
+        return ver
+
+
+@app.delete("/real-api/algorithms/{org}/{name}")
+def delete_custom_algorithm_endpoint(org: str, name: str):
+    algo_id = f"{org}/{name}"
+    with _CUSTOM_LOCK:
+        cst = load_custom_state()
+        cst["algorithms"] = [a for a in cst["algorithms"] if a["id"] != algo_id]
+        cst["evals"] = [e for e in cst["evals"] if e["algorithmId"] != algo_id]
+        save_custom_state(cst)
+    return {"ok": True}
+
+
+@app.post("/real-api/algorithms/{org}/{name}/infer")
+async def infer_custom_algorithm_endpoint(
+    org: str,
+    name: str,
+    version: str = Form("v1.0.0"),
+    file: UploadFile | None = File(None),
+    sample_path: str | None = Form(None),
+):
+    algo_id = f"{org}/{name}"
+    if file is not None:
+        raw = await file.read()
+    elif sample_path:
+        clean = sample_path.split("?", 1)[0].strip("/")
+        # 支持 /real-api/datasets/{ds_org}/{ds_name}/files/{part}/{filename}
+        parts = clean.split("/")
+        if len(parts) >= 7 and parts[0] == "real-api" and parts[1] == "datasets" and parts[4] == "files":
+            ds_org, ds_name, part, fname = parts[2], parts[3], parts[5], parts[6]
+            if f"{ds_org}/{ds_name}" == "Admin/cat-dog-dataset":
+                p = DATA_DIR / part / "images" / fname
+            elif f"{ds_org}/{ds_name}" == "Admin/dehaze-dataset":
+                p = DEHAZE_DATA_DIR / part / "images" / fname
+            elif f"{ds_org}/{ds_name}" == "Admin/sroie-ocr-dataset":
+                p = OCR_DATA_DIR / part / "images" / fname
+            else:
+                p = CUSTOM_DATA_ROOT / safe_slug(ds_org, ds_name) / part / "images" / fname
+            if not p.exists():
+                raise HTTPException(status_code=404, detail="示例图片不存在")
+            raw = p.read_bytes()
+        else:
+            raise HTTPException(status_code=400, detail="无效的示例图片路径")
+    else:
+        raise HTTPException(status_code=400, detail="请上传图片或选择示例图片")
+
+    try:
+        return infer_custom_algorithm(algo_id, version, raw)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"自定义算法推理失败：{exc}")
+
+
+@app.post("/real-api/benchmarks")
+async def create_custom_benchmark_endpoint(
+    metadata_json: str = Form(...),
+    evaluator_script: UploadFile | None = File(None),
+):
+    try:
+        meta = json.loads(metadata_json)
+        script_bytes = await evaluator_script.read() if evaluator_script is not None else None
+        return create_custom_benchmark(meta, evaluator_script_bytes=script_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ==================== 低代码可视化编排实验室（实验性） ====================
+class StudioGraphReq(BaseModel):
+    nodes: list[dict]
+    edges: list[dict]
+    sampleIndex: int | None = None
+    sampleCount: int = 12
+
+
+class StudioPublishReq(BaseModel):
+    nodes: list[dict]
+    edges: list[dict]
+    meta: dict
+    createdBy: str = "admin"
+    role: str = "admin"
+
+
+@app.post("/real-api/studio/run-sample")
+def studio_run_sample_endpoint(req: StudioGraphReq):
+    try:
+        return run_studio_sample(req.nodes, req.edges, sample_index=req.sampleIndex)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/real-api/studio/run-eval")
+def studio_run_eval_endpoint(req: StudioGraphReq):
+    try:
+        return run_studio_batch_eval(req.nodes, req.edges, sample_count=req.sampleCount)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/real-api/studio/preview-code")
+def studio_preview_code_endpoint(req: StudioPublishReq):
+    try:
+        code, base_id = generate_pipeline_predictor_code(req.nodes, req.edges, req.meta.get("task", "image-dehazing"))
+        return {"code": code, "baseAlgorithmId": base_id}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/real-api/studio/publish")
+def studio_publish_endpoint(req: StudioPublishReq):
+    try:
+        return publish_studio_pipeline(req.nodes, req.edges, req.meta, created_by=req.createdBy, role=req.role)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

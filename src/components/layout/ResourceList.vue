@@ -101,6 +101,15 @@ const activeFilters = computed<ActiveFilter[]>(() => {
 
 const title = computed(() => (props.kind === 'algorithm' ? '算法' : '数据集'))
 const createTo = computed(() => (props.kind === 'algorithm' ? (can.value.createAlgorithm ? '/algorithms/new' : '') : can.value.createDataset ? '/datasets/new' : ''))
+const showAllTags = ref(false)
+const visibleTags = computed(() => {
+  const list = tagList.value ?? []
+  if (showAllTags.value || list.length <= 8) return list
+  const selected = new Set(q.value.tags ?? [])
+  const top = list.slice(0, 8)
+  const extra = list.slice(8).filter((t) => selected.has(t.name))
+  return [...top, ...extra]
+})
 </script>
 
 <template>
@@ -151,7 +160,7 @@ const createTo = computed(() => (props.kind === 'algorithm' ? (can.value.createA
           </div>
           <div v-if="tagList?.length" class="flex flex-wrap gap-1.5">
             <button
-              v-for="tg in tagList"
+              v-for="tg in visibleTags"
               :key="tg.name"
               class="inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-xs transition"
               :class="(q.tags ?? []).includes(tg.name) ? 'border-gray-900 bg-gray-900 text-white dark:border-white dark:bg-white dark:text-gray-900' : 'border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50 dark:border-gray-800 dark:text-gray-300 dark:hover:bg-gray-900'"
@@ -160,6 +169,14 @@ const createTo = computed(() => (props.kind === 'algorithm' ? (can.value.createA
               <Tag class="size-3 opacity-60" />
               <span>{{ tg.name }}</span>
               <span class="text-[10px] opacity-60">{{ tg.count }}</span>
+            </button>
+            <button
+              v-if="tagList.length > 8"
+              type="button"
+              class="cursor-pointer rounded-lg px-2 py-1 text-xs text-brand-600 hover:bg-brand-50 dark:text-brand-400 dark:hover:bg-brand-950/40"
+              @click="showAllTags = !showAllTags"
+            >
+              {{ showAllTags ? '收起' : `展开全部 (${tagList.length})` }}
             </button>
           </div>
           <p v-else class="text-xs text-gray-400">暂无标签</p>

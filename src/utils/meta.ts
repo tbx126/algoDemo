@@ -24,7 +24,7 @@ export const BUSINESS_CATEGORIES: Record<BusinessCategory, { label: string; colo
 }
 
 /** 内置评测器 & 原生渲染支持的任务 */
-export const BUILTIN_TASKS: TaskType[] = ['image-classification', 'object-detection', 'semantic-segmentation']
+export const BUILTIN_TASKS: TaskType[] = ['image-classification', 'image-dehazing', 'object-detection', 'semantic-segmentation', 'ocr']
 
 export const ROLES: Record<Role, { label: string; desc: string; chip: string }> = {
   admin: { label: '管理员', desc: '全部权限：数据集、评测基准、账号与审核，可查看与下载测试集', chip: 'border-indigo-200 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-600/20 dark:text-brand-100' },

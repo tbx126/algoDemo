@@ -18,6 +18,7 @@ export const router = createRouter({
     { path: '/evals', name: 'evals', component: () => import('@/views/eval/EvalListView.vue') },
     { path: '/evals/new', name: 'eval-new', component: () => import('@/views/eval/NewEvalView.vue') },
     { path: '/evals/:id', name: 'eval', component: () => import('@/views/eval/EvalDetailView.vue') },
+    { path: '/studio', name: 'studio', component: () => import('@/views/studio/StudioView.vue'), meta: { fullBleed: true } },
     { path: '/vendors/new', name: 'vendor-new', component: () => import('@/views/create/NewVendorView.vue') },
     { path: '/vendors/:id/edit', name: 'vendor-edit', component: () => import('@/views/create/NewVendorView.vue') },
     { path: '/orgs/:id', name: 'org', component: () => import('@/views/org/OrgView.vue') },

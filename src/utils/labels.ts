@@ -27,8 +27,9 @@ export function labelSpec(task: TaskType): LabelSpec {
       return { required: ['file_name', 'clear_file'], optional: ['beta', 'airlight'], perObject: false, desc: '一张有雾图一行，clear_file 指向对应的清晰真值图', dataExt: 'jpg' }
     case 'object-detection':
     case 'keypoint-detection':
-    case 'ocr':
       return { required: ['file_name', 'label', 'x_min', 'y_min', 'x_max', 'y_max'], optional: CONDITION_COLUMNS, perObject: true, desc: '一个框一行，坐标为像素；无目标的图写一行且 label 留空（用于统计误报）', dataExt: 'jpg' }
+    case 'ocr':
+      return { required: ['file_name', 'text'], optional: ['category', 'source_receipt', ...CONDITION_COLUMNS], perObject: false, desc: '一张裁剪文本行图片一行，text 为精确文字真值（Ground Truth）', dataExt: 'jpg' }
     case 'semantic-segmentation':
     case 'instance-segmentation':
       return { required: ['file_name', 'mask_file'], optional: CONDITION_COLUMNS, perObject: false, desc: '一张图一行，mask_file 指向 masks/ 下的 PNG（像素值为类别序号）', dataExt: 'jpg' }

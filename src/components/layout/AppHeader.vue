@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger } from 'reka-ui'
-import { Box, ChevronDown, Database, FlaskConical, LogOut, Menu, Moon, Plus, ShieldCheck, Sun, Trophy, X, Check } from 'lucide-vue-next'
+import { Box, ChevronDown, Database, FlaskConical, LogOut, Menu, Moon, Plus, ShieldCheck, Sun, Trophy, Workflow, X, Check } from 'lucide-vue-next'
 import { useSession } from '@/stores/session'
 import { ROLES } from '@/utils/meta'
 import type { Role } from '@/types'
@@ -19,6 +19,7 @@ const nav = [
   { to: '/datasets', label: '数据集', icon: Database },
   { to: '/benchmarks', label: '评测基准', icon: Trophy },
   { to: '/evals', label: '评测任务', icon: FlaskConical },
+  { to: '/studio', label: '编排实验', icon: Workflow, beta: true },
 ]
 const isActive = (to: string) => route.path.startsWith(to)
 const roleList = Object.entries(ROLES) as [Role, (typeof ROLES)[Role]][]
@@ -41,7 +42,7 @@ function switchRole(r: Role) {
 
 <template>
   <header class="sticky top-0 z-40 border-b border-gray-100 bg-white/90 backdrop-blur dark:border-gray-800 dark:bg-gray-950/90">
-    <div class="container-page flex h-14 items-center gap-4">
+    <div class="flex h-14 items-center gap-4" :class="route.meta.fullBleed ? 'w-full px-4' : 'container-page'">
       <RouterLink to="/" class="flex shrink-0 items-center gap-2 font-semibold text-gray-900 dark:text-white">
         <img src="/logo.png" alt="总部算法平台" class="size-7 rounded-md object-contain" />
         <span class="text-[17px] tracking-tight">总部算法平台</span>
@@ -59,6 +60,7 @@ function switchRole(r: Role) {
         >
           <component :is="n.icon" class="size-4" :class="isActive(n.to) ? 'text-brand-600 dark:text-brand-500' : 'text-gray-400'" />
           {{ n.label }}
+          <span v-if="'beta' in n && n.beta" class="rounded bg-amber-100 px-1 py-0.2 text-[10px] font-medium text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">Beta</span>
         </RouterLink>
         <RouterLink
           v-if="can.admin"
