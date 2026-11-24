@@ -19,6 +19,32 @@ export type BusinessCategory = 'security' | 'inspection' | 'fire-safety' | 'env-
 /** 四类账号：管理员（平台运营）、区域侧（查看已审核算法/训练集/评测）、演示账号（只读展示）、厂商账号（算法供应商） */
 export type Role = 'admin' | 'regional' | 'demo' | 'vendor'
 
+/** 14 个区域侧节点 */
+export type RegionName = '华北' | '蒙古' | '河北' | '山东' | '东北' | '华中' | '华东' | '甘肃' | '新疆' | '宁夏' | '西南' | '南方' | '云南' | '贵州'
+
+export interface AlgorithmDispatch {
+  algorithmId: string
+  region: RegionName
+  dispatchedAt: string
+  dispatchedBy: string
+  source: 'direct' | 'approved_request'
+}
+
+export type TrialRequestStatus = 'pending' | 'approved' | 'rejected'
+
+export interface RegionTrialRequest {
+  id: string
+  algorithmId: string
+  region: RegionName
+  applicant: string
+  reason: string
+  status: TrialRequestStatus
+  createdAt: string
+  reviewedAt?: string
+  reviewedBy?: string
+  reviewNote?: string
+}
+
 
 export type Framework = 'PyTorch' | 'ONNX' | 'TensorRT' | 'OpenCV' | 'NumPy' | 'Paddle'
 
@@ -56,6 +82,8 @@ export interface User {
   role: Role
   /** 所属厂商；管理员与演示账号不属于任何组织（null） */
   orgId: string | null
+  /** 所属区域（仅区域侧账号） */
+  region?: RegionName | null
   active: boolean
   createdAt: string
   lastLoginAt: string
@@ -93,6 +121,8 @@ export interface Algorithm {
   task: TaskType
   business: BusinessCategory
   framework: Framework
+  /** 是否为平台自研算法 */
+  selfDeveloped?: boolean
   tags: string[]
   summary: string
   readme: string // markdown
@@ -371,6 +401,7 @@ export interface ListQuery {
   q?: string
   task?: TaskType | ''
   business?: BusinessCategory | ''
+  selfDeveloped?: 'only' | 'external' | ''
   tags?: string[]
   framework?: string
   org?: string

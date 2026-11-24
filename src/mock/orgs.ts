@@ -41,7 +41,7 @@ export const orgs: Org[] = [
 
 export const users: User[] = [
   { id: 'u1', username: 'admin', displayName: '平台管理员', email: 'admin@algohub.local', role: 'admin', orgId: null, active: true, createdAt: '2026-11-18T09:00:00+08:00', lastLoginAt: '2026-11-20T09:00:00+08:00' },
-  { id: 'u4', username: 'regional', displayName: '区域侧账号', email: 'regional@algohub.local', role: 'regional', orgId: null, active: true, createdAt: '2026-11-20T15:25:00+08:00', lastLoginAt: '' },
+  { id: 'u4', username: 'regional', displayName: '华中区域账号', email: 'huazhong@algohub.local', role: 'regional', orgId: null, region: '华中', active: true, createdAt: '2026-11-20T15:25:00+08:00', lastLoginAt: '' },
   { id: 'u2', username: 'demo', displayName: '演示账号', email: 'demo@algohub.local', role: 'demo', orgId: null, active: true, createdAt: '2026-11-18T09:00:00+08:00', lastLoginAt: '' },
   { id: 'u3', username: 'zhang.ll', displayName: '张蕾蕾（锋云深蓝）', email: 'zhang_ll8@hdec.com', role: 'vendor', orgId: VENDOR_ID, active: true, createdAt: '2026-11-18T10:00:00+08:00', lastLoginAt: '' },
 ]

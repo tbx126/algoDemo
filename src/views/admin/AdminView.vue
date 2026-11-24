@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Building2, Check, ClipboardCheck, Pencil, Plus, RotateCcw, ShieldCheck, Tag, Trash2, UserPlus, Users, X } from 'lucide-vue-next'
-import { ApiError, createTag, createUser, deleteTag, listOrgs, listReviewQueue, listTags, listUsers, renameTag, resetPrototypeData, reviewVersion, setUserActive, updateUser } from '@/api'
+import { Building2, Check, ClipboardCheck, MapPin, Pencil, Plus, RotateCcw, Send, ShieldCheck, Tag, Trash2, UserPlus, Users, X } from 'lucide-vue-next'
+import { ApiError, createTag, createUser, deleteTag, getDispatchedRegions, getPendingTrialRegionsForAlgo, listAlgorithms, listOrgs, listReviewQueue, listTags, listTrialRequests, listUsers, renameTag, resetPrototypeData, reviewTrialRequest, reviewVersion, setUserActive, updateUser } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
-import { ROLES, TASKS } from '@/utils/meta'
+import { REGIONS, ROLES, TASKS } from '@/utils/meta'
 import { fmtBytes, fmtDate, timeAgo } from '@/utils/format'
 import { algoFullLabel } from '@/utils/display'
-import type { Role, User } from '@/types'
+import type { RegionName, Role, User } from '@/types'
 import StateView from '@/components/ui/StateView.vue'
 import OrgAvatar from '@/components/ui/OrgAvatar.vue'
 import Modal from '@/components/ui/Modal.vue'
 import HashText from '@/components/ui/HashText.vue'
+import DispatchModal from '@/components/admin/DispatchModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,6 +25,31 @@ const { data: users, reload: reloadUsers } = useAsync(() => listUsers())
 const { data: reviews, reload: reloadReviews } = useAsync(() => listReviewQueue())
 const { data: orgList } = useAsync(() => listOrgs())
 const { data: tagList, reload: reloadTags } = useAsync(() => listTags())
+const { data: trialRequests, reload: reloadTrials } = useAsync(() => listTrialRequests())
+const { data: allAlgosRes, reload: reloadAlgos } = useAsync(() => listAlgorithms({ pageSize: 200 }))
+
+const pendingTrials = computed(() => (trialRequests.value ?? []).filter((r) => r.status === 'pending'))
+const handledTrials = computed(() => (trialRequests.value ?? []).filter((r) => r.status !== 'pending'))
+const auditedAlgos = computed(() => (allAlgosRes.value?.items ?? []).filter((a) => a.versions.some((v) => v.status === 'ready' || v.status === 'building')))
+
+const dispatchAlgoId = ref('')
+const dispatchOpen = computed({ get: () => !!dispatchAlgoId.value, set: (v) => !v && (dispatchAlgoId.value = '') })
+const trialNotes = reactive<Record<string, string>>({})
+async function handleTrialReview(requestId: string, approve: boolean) {
+  const note = trialNotes[requestId] ?? ''
+  if (!approve && !note.trim()) {
+    toast('驳回时请填写原因', 'error')
+    return
+  }
+  try {
+    await reviewTrialRequest(requestId, approve, note)
+    toast(approve ? '审批已通过，算法已自动下发至申请区域' : '已驳回该试用申请', approve ? 'success' : 'info')
+    reloadTrials()
+    reloadAlgos()
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : '审批操作失败', 'error')
+  }
+}
 
 // ---- 标签管理 ----
 const newTag = ref('')
@@ -86,7 +112,7 @@ async function removeTag(name: string) {
 const userQ = ref('')
 const filteredUsers = computed(() => (users.value ?? []).filter((u) => !userQ.value || u.username.includes(userQ.value) || u.displayName.includes(userQ.value)))
 const createOpen = ref(false)
-const nu = reactive({ username: '', displayName: '', email: '', role: 'vendor' as Role, orgId: '' })
+const nu = reactive({ username: '', displayName: '', email: '', role: 'vendor' as Role, orgId: '', region: '华中' as RegionName })
 const vendors = computed(() => (orgList.value ?? []).filter((o) => o.kind === 'vendor'))
 const orgName = (id: string | null) => (id ? (orgList.value?.find((o) => o.id === id)?.displayName ?? id) : '')
 const created = ref<{ username: string; tempPassword: string } | null>(null)
@@ -94,7 +120,11 @@ const created = ref<{ username: string; tempPassword: string } | null>(null)
 watch(vendors, (v) => !nu.orgId && v[0] && (nu.orgId = v[0].id), { immediate: true })
 async function doCreate() {
   try {
-    const r = await createUser({ ...nu, orgId: nu.role === 'vendor' ? nu.orgId : null })
+    const r = await createUser({
+      ...nu,
+      orgId: nu.role === 'vendor' ? nu.orgId : null,
+      region: nu.role === 'regional' ? nu.region : null,
+    })
     created.value = { username: r.user.username, tempPassword: r.tempPassword }
     reloadUsers()
   } catch (e) {
@@ -105,21 +135,27 @@ function closeCreate(v: boolean) {
   createOpen.value = v
   if (!v) {
     created.value = null
-    Object.assign(nu, { username: '', displayName: '', email: '', role: 'vendor', orgId: vendors.value[0]?.id ?? '' })
+    Object.assign(nu, { username: '', displayName: '', email: '', role: 'vendor', orgId: vendors.value[0]?.id ?? '', region: '华中' })
   }
 }
 // ---- 编辑用户 ----
 const editing = ref<User | null>(null)
-const eu = reactive({ displayName: '', email: '', role: 'vendor' as Role, orgId: '' })
+const eu = reactive({ displayName: '', email: '', role: 'vendor' as Role, orgId: '', region: '华中' as RegionName })
 const editOpen = computed({ get: () => !!editing.value, set: (v) => !v && (editing.value = null) })
 function openEdit(u: User) {
   editing.value = u
-  Object.assign(eu, { displayName: u.displayName, email: u.email, role: u.role, orgId: u.orgId ?? vendors.value[0]?.id ?? '' })
+  Object.assign(eu, { displayName: u.displayName, email: u.email, role: u.role, orgId: u.orgId ?? vendors.value[0]?.id ?? '', region: u.region ?? '华中' })
 }
 async function saveEdit() {
   if (!editing.value) return
   try {
-    await updateUser(editing.value.id, { displayName: eu.displayName.trim(), email: eu.email.trim(), role: eu.role, orgId: eu.role === 'vendor' ? eu.orgId : null })
+    await updateUser(editing.value.id, {
+      displayName: eu.displayName.trim(),
+      email: eu.email.trim(),
+      role: eu.role,
+      orgId: eu.role === 'vendor' ? eu.orgId : null,
+      region: eu.role === 'regional' ? eu.region : null,
+    })
     toast('账号信息已保存')
     editing.value = null
     reloadUsers()
@@ -161,6 +197,9 @@ async function review(algoId: string, version: string, approve: boolean) {
         <button class="tab" :class="{ 'tab-active': tab === 'reviews' }" @click="router.replace('/admin/reviews')">
           <ClipboardCheck class="size-4" />审核队列<span v-if="reviews?.length" class="rounded-full bg-amber-500 px-1.5 text-[10px] text-white">{{ reviews.length }}</span>
         </button>
+        <button class="tab" :class="{ 'tab-active': tab === 'dispatches' }" @click="router.replace('/admin/dispatches')">
+          <Send class="size-4" />区域下发与审批<span v-if="pendingTrials.length" class="rounded-full bg-sky-600 px-1.5 text-[10px] text-white">{{ pendingTrials.length }}</span>
+        </button>
         <button class="tab" :class="{ 'tab-active': tab === 'vendors' }" @click="router.replace('/admin/vendors')"><Building2 class="size-4" />厂商</button>
         <button class="tab" :class="{ 'tab-active': tab === 'tags' }" @click="router.replace('/admin/tags')">
           <Tag class="size-4" />标签<span v-if="tagList?.length" class="chip px-1 py-0 text-[10px]">{{ tagList.length }}</span>
@@ -178,13 +217,17 @@ async function review(algoId: string, version: string, approve: boolean) {
         <StateView :loading="!users">
           <div class="card overflow-x-auto">
             <table class="table-base">
-              <thead><tr><th>用户</th><th>邮箱</th><th>角色</th><th>所属厂商</th><th>最近登录</th><th>状态</th><th></th></tr></thead>
+              <thead><tr><th>用户</th><th>邮箱</th><th>角色</th><th>所属厂商 / 区域</th><th>最近登录</th><th>状态</th><th></th></tr></thead>
               <tbody>
                 <tr v-for="u in filteredUsers" :key="u.id" :class="{ 'opacity-50': !u.active }">
                   <td><span class="font-medium">{{ u.displayName }}</span> <span class="mono text-gray-500">@{{ u.username }}</span></td>
                   <td class="text-gray-500">{{ u.email }}</td>
                   <td><span class="chip" :class="ROLES[u.role].chip">{{ ROLES[u.role].label }}</span></td>
-                  <td><span v-if="u.orgId" class="flex items-center gap-1.5"><OrgAvatar :org="u.orgId" :size="16" />{{ orgName(u.orgId) }}</span><span v-else class="text-xs text-gray-400">不属于任何组织</span></td>
+                  <td>
+                    <span v-if="u.orgId" class="flex items-center gap-1.5"><OrgAvatar :org="u.orgId" :size="16" />{{ orgName(u.orgId) }}</span>
+                    <span v-else-if="u.role === 'regional'" class="chip border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300"><MapPin class="size-3" />{{ u.region ?? '华中' }}区域</span>
+                    <span v-else class="text-xs text-gray-400">不属于任何组织</span>
+                  </td>
                   <td class="whitespace-nowrap text-gray-500">{{ u.lastLoginAt ? timeAgo(u.lastLoginAt) : '从未登录' }}</td>
                   <td>{{ u.active ? '启用' : '已停用' }}</td>
                   <td class="text-right whitespace-nowrap">
@@ -233,6 +276,110 @@ async function review(algoId: string, version: string, approve: boolean) {
             </div>
           </div>
         </StateView>
+      </div>
+
+      <!-- 区域下发与审批 -->
+      <div v-else-if="tab === 'dispatches'" class="space-y-8">
+        <!-- 1. 区域试用申请审批 -->
+        <section>
+          <div class="mb-3 flex items-center justify-between">
+            <h2 class="section-title flex items-center gap-2">
+              <Send class="size-4 text-sky-600" />区域试用申请审批
+              <span v-if="pendingTrials.length" class="rounded-full bg-sky-600 px-2 py-0.5 text-xs text-white">{{ pendingTrials.length }} 待审批</span>
+            </h2>
+            <span class="text-xs text-gray-500">审批通过后将自动下发至对应区域侧账号</span>
+          </div>
+
+          <StateView :loading="!trialRequests" :empty="!pendingTrials.length" empty-text="当前没有待审批的区域试用申请">
+            <div class="space-y-3">
+              <div v-for="req in pendingTrials" :key="req.id" class="card p-4">
+                <div class="flex flex-wrap items-center gap-2 text-sm">
+                  <span class="chip border-emerald-200 bg-emerald-50 font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300">
+                    <MapPin class="size-3" />{{ req.region }}区域
+                  </span>
+                  <span class="text-gray-400">申请试用</span>
+                  <RouterLink :to="`/algorithms/${req.algorithmId}`" class="font-semibold text-gray-900 hover:text-brand-600 dark:text-white">{{ algoFullLabel(req.algorithmId) }}</RouterLink>
+                  <span class="ml-auto text-xs text-gray-500">{{ req.applicant }} · {{ fmtDate(req.createdAt) }}</span>
+                </div>
+                <p class="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-gray-800/60 dark:text-gray-300">申请理由：{{ req.reason }}</p>
+                <div class="mt-3 flex flex-col gap-2 sm:flex-row">
+                  <input v-model="trialNotes[req.id]" class="input flex-1 text-xs" placeholder="审批意见（驳回时必填）" aria-label="审批意见" />
+                  <button type="button" class="btn-danger text-xs" @click="handleTrialReview(req.id, false)">驳回申请</button>
+                  <button type="button" class="btn-brand text-xs" @click="handleTrialReview(req.id, true)">审批通过并下发</button>
+                </div>
+              </div>
+            </div>
+          </StateView>
+
+          <div v-if="handledTrials.length" class="mt-4">
+            <p class="mb-2 text-xs font-medium text-gray-500">近期审批记录（{{ handledTrials.length }}）</p>
+            <div class="card overflow-x-auto">
+              <table class="table-base text-xs">
+                <thead><tr><th>申请区域</th><th>算法</th><th>审批结果</th><th>审批意见</th><th>处理时间</th></tr></thead>
+                <tbody>
+                  <tr v-for="r in handledTrials.slice(0, 10)" :key="r.id">
+                    <td><span class="chip">{{ r.region }}</span></td>
+                    <td><RouterLink :to="`/algorithms/${r.algorithmId}`" class="font-medium hover:text-brand-600">{{ algoFullLabel(r.algorithmId) }}</RouterLink></td>
+                    <td>
+                      <span
+                        class="chip"
+                        :class="r.status === 'approved' ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300' : 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-300'"
+                      >
+                        {{ r.status === 'approved' ? '已通过并下发' : '已驳回' }}
+                      </span>
+                    </td>
+                    <td class="text-gray-500">{{ r.reviewNote || '—' }}</td>
+                    <td class="whitespace-nowrap text-gray-500">{{ r.reviewedAt ? fmtDate(r.reviewedAt) : '—' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. 算法区域下发总览 -->
+        <section>
+          <div class="mb-3 flex items-center justify-between">
+            <h2 class="section-title flex items-center gap-2"><MapPin class="size-4 text-brand-600" />算法区域下发总览</h2>
+            <span class="text-xs text-gray-500">覆盖 {{ REGIONS.length }} 个区域：{{ REGIONS.join('、') }}</span>
+          </div>
+          <div class="card overflow-x-auto">
+            <table class="table-base text-xs">
+              <thead><tr><th>已审核算法</th><th>任务类型</th><th>已下发区域（共 {{ REGIONS.length }} 区域）</th><th class="text-right">操作</th></tr></thead>
+              <tbody>
+                <tr v-for="a in auditedAlgos" :key="a.id">
+                  <td>
+                    <RouterLink :to="`/algorithms/${a.id}`" class="font-medium text-gray-900 hover:text-brand-600 dark:text-white">{{ algoFullLabel(a) }}</RouterLink>
+                  </td>
+                  <td class="whitespace-nowrap text-gray-500">{{ TASKS[a.task].label }}</td>
+                  <td>
+                    <div class="flex flex-wrap items-center gap-1">
+                      <span
+                        v-for="rg in getDispatchedRegions(a.id)"
+                        :key="rg"
+                        class="chip border-sky-200 bg-sky-50 px-1.5 py-0 text-[11px] text-sky-700 dark:border-sky-900 dark:bg-sky-950/50 dark:text-sky-300"
+                      >
+                        {{ rg }}
+                      </span>
+                      <span v-if="!getDispatchedRegions(a.id).length" class="text-gray-400">暂未下发</span>
+                      <span
+                        v-if="getPendingTrialRegionsForAlgo(a.id).length"
+                        class="chip border-amber-200 bg-amber-50 px-1.5 py-0 text-[11px] text-amber-700 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-300"
+                      >
+                        {{ getPendingTrialRegionsForAlgo(a.id).length }} 待审批
+                      </span>
+                    </div>
+                  </td>
+                  <td class="text-right whitespace-nowrap">
+                    <button type="button" class="btn-default py-1 text-xs" @click="dispatchAlgoId = a.id">
+                      <Send class="size-3" />配置下发 ({{ getDispatchedRegions(a.id).length }}/{{ REGIONS.length }})
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
 
       <!-- 厂商 -->
@@ -322,6 +469,12 @@ async function review(algoId: string, version: string, approve: boolean) {
                 <option v-for="o in vendors" :key="o.id" :value="o.id">{{ o.displayName }}</option>
               </select>
             </div>
+            <div v-else-if="eu.role === 'regional'">
+              <label class="label" for="eu-rg">所属区域</label>
+              <select id="eu-rg" v-model="eu.region" class="input" required>
+                <option v-for="rg in REGIONS" :key="rg" :value="rg">{{ rg }}区域</option>
+              </select>
+            </div>
             <p v-else class="self-end pb-2 text-xs text-gray-500">{{ ROLES[eu.role].label }}不属于任何组织</p>
           </div>
         </form>
@@ -365,6 +518,12 @@ async function review(algoId: string, version: string, approve: boolean) {
                 <option v-for="o in vendors" :key="o.id" :value="o.id">{{ o.displayName }}</option>
               </select>
             </div>
+            <div v-else-if="nu.role === 'regional'">
+              <label class="label" for="nu-rg">所属区域</label>
+              <select id="nu-rg" v-model="nu.region" class="input" required>
+                <option v-for="rg in REGIONS" :key="rg" :value="rg">{{ rg }}区域</option>
+              </select>
+            </div>
             <p v-else class="self-end pb-2 text-xs text-gray-500">{{ ROLES[nu.role].label }}不属于任何组织</p>
           </div>
         </form>
@@ -373,6 +532,7 @@ async function review(algoId: string, version: string, approve: boolean) {
           <button v-if="!created" type="submit" form="nu-form" class="btn-brand">创建账号</button>
         </template>
       </Modal>
+      <DispatchModal v-model:open="dispatchOpen" :algorithm-id="dispatchAlgoId" @saved="reloadTrials(); reloadAlgos()" />
     </template>
   </div>
 </template>

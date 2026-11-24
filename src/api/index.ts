@@ -6,6 +6,7 @@
 import { reactive, watch } from 'vue'
 import type {
   Algorithm,
+  AlgorithmDispatch,
   AlgoVersion,
   Benchmark,
   BusinessCategory,
@@ -17,8 +18,11 @@ import type {
   Org,
   Paginated,
   QueueStatus,
+  RegionName,
+  RegionTrialRequest,
   Role,
   TaskType,
+  TrialRequestStatus,
   User,
   VendorProfile,
   DatasetPart,
@@ -50,7 +54,27 @@ const LEGACY_NOISY_TAGS = new Set([
 ])
 const T0: string[] = [...DEFAULT_TAGS]
 const DEL0: string[] = []
-const SOURCES = { algorithms: A0, datasets: D0, benchmarks: B0, evals: E0, evaluators: EV0, orgs: O0, users: U0, tags: T0, deletedRealIds: DEL0 }
+const DISP0: AlgorithmDispatch[] = [
+  { algorithmId: 'Admin/dehaze-deanet', region: '华中', dispatchedAt: '2026-11-21T10:00:00+08:00', dispatchedBy: 'admin', source: 'direct' },
+  { algorithmId: 'Admin/dehaze-deanet', region: '华东', dispatchedAt: '2026-11-21T10:00:00+08:00', dispatchedBy: 'admin', source: 'direct' },
+  { algorithmId: 'Admin/dehaze-deanet', region: '华北', dispatchedAt: '2026-11-21T10:00:00+08:00', dispatchedBy: 'admin', source: 'direct' },
+  { algorithmId: 'Admin/cat-dog-classifier', region: '华中', dispatchedAt: '2026-11-21T14:20:00+08:00', dispatchedBy: 'admin', source: 'direct' },
+  { algorithmId: 'Admin/cat-dog-classifier', region: '西南', dispatchedAt: '2026-11-21T14:20:00+08:00', dispatchedBy: 'admin', source: 'direct' },
+  { algorithmId: 'Admin/dehaze-ffanet', region: '华东', dispatchedAt: '2026-11-22T09:15:00+08:00', dispatchedBy: 'admin', source: 'direct' },
+  { algorithmId: 'Admin/dehaze-ffanet', region: '山东', dispatchedAt: '2026-11-22T09:15:00+08:00', dispatchedBy: 'admin', source: 'direct' },
+]
+const TRIAL0: RegionTrialRequest[] = [
+  {
+    id: 'tr-1001',
+    algorithmId: 'Admin/dehaze-deanet',
+    region: '山东',
+    applicant: '山东区域账号',
+    reason: '拟在山东区域新能源场站雾天可见光巡检链路中开展试点验证。',
+    status: 'pending',
+    createdAt: '2026-11-23T09:30:00+08:00',
+  },
+]
+const SOURCES = { algorithms: A0, datasets: D0, benchmarks: B0, evals: E0, evaluators: EV0, orgs: O0, users: U0, tags: T0, deletedRealIds: DEL0, dispatches: DISP0, trialRequests: TRIAL0 }
 type DbKey = keyof typeof SOURCES
 try {
   const saved = JSON.parse(localStorage.getItem(STORE_KEY) ?? 'null') as Partial<Record<DbKey, unknown[]>> | null
@@ -75,11 +99,19 @@ try {
 } catch {
   /* ignore */
 }
-// 兼容旧版 localStorage 数据：补齐缺失的 business 字段、标签库与区域侧演示账号
-for (const a of SOURCES.algorithms) if (!a.business) a.business = 'inspection'
+// 兼容旧版 localStorage 数据：补齐缺失的 business 字段、自研标识、标签库与区域侧演示账号
+const DEFAULT_SELF_DEVELOPED_IDS = new Set(['Admin/cat-dog-classifier', 'Admin/dehaze-dcp'])
+for (const a of SOURCES.algorithms) {
+  if (!a.business) a.business = 'inspection'
+  if (a.selfDeveloped === undefined && DEFAULT_SELF_DEVELOPED_IDS.has(a.id)) a.selfDeveloped = true
+}
 for (const t of SOURCES.algorithms.flatMap((a) => a.tags)) if (t && !SOURCES.tags.includes(t)) SOURCES.tags.push(t)
-if (!SOURCES.users.some((u) => u.id === 'u4')) {
-  SOURCES.users.splice(1, 0, { id: 'u4', username: 'regional', displayName: '区域侧账号', email: 'regional@algohub.local', role: 'regional', orgId: null, active: true, createdAt: '2026-11-20T15:25:00+08:00', lastLoginAt: '' })
+const regionalUser = SOURCES.users.find((u) => u.id === 'u4')
+if (!regionalUser) {
+  SOURCES.users.splice(1, 0, { id: 'u4', username: 'regional', displayName: '华中区域账号', email: 'huazhong@algohub.local', role: 'regional', orgId: null, region: '华中', active: true, createdAt: '2026-11-20T15:25:00+08:00', lastLoginAt: '' })
+} else {
+  if (!regionalUser.region) regionalUser.region = '华中'
+  if (regionalUser.displayName === '区域侧账号') regionalUser.displayName = '华中区域账号'
 }
 
 /**
@@ -193,6 +225,7 @@ function applyRealBootstrap(payload: {
         task: prev.task || algo.task,
         business: prev.business || algo.business,
         framework: prev.framework || algo.framework,
+        selfDeveloped: prev.selfDeveloped ?? algo.selfDeveloped ?? DEFAULT_SELF_DEVELOPED_IDS.has(algo.id),
         tags: algo.tags.length ? algo.tags : prev.tags,
         summary: prev.summary || algo.summary,
         readme: prev.readme || algo.readme,
@@ -201,6 +234,7 @@ function applyRealBootstrap(payload: {
       db.algorithms[ai] = merged
       for (const t of merged.tags) if (t && !db.tags.includes(t)) db.tags.push(t)
     } else {
+      if (algo.selfDeveloped === undefined && DEFAULT_SELF_DEVELOPED_IDS.has(algo.id)) algo.selfDeveloped = true
       algo.algoYaml = syncAlgoYaml(algo)
       db.algorithms.unshift(algo)
       for (const t of algo.tags) if (t && !db.tags.includes(t)) db.tags.push(t)
@@ -342,6 +376,8 @@ function filterSort<T extends Algorithm | Dataset>(list: T[], q: ListQuery): T[]
   }
   if (q.task) r = r.filter((x) => x.task === q.task)
   if (q.business) r = r.filter((x) => 'business' in x && x.business === q.business)
+  if (q.selfDeveloped === 'only') r = r.filter((x) => 'framework' in x && !!x.selfDeveloped)
+  else if (q.selfDeveloped === 'external') r = r.filter((x) => 'framework' in x && !x.selfDeveloped)
   if (q.tags?.length) r = r.filter((x) => q.tags!.every((tag) => x.tags.includes(tag)))
   if (q.org) r = r.filter((x) => x.org === q.org)
   if (q.framework) r = r.filter((x) => 'framework' in x && x.framework === q.framework)
@@ -975,10 +1011,19 @@ export async function listUsers(): Promise<User[]> {
 }
 
 // POST /api/admin/users —— 外部用户账号由管理员创建
-export async function createUser(input: { username: string; displayName: string; email: string; role: Role; orgId: string | null }): Promise<{ user: User; tempPassword: string }> {
+export async function createUser(input: { username: string; displayName: string; email: string; role: Role; orgId: string | null; region?: RegionName | null }): Promise<{ user: User; tempPassword: string }> {
   await delay(400)
   if (db.users.some((u) => u.username === input.username)) throw new ApiError(409, '用户名已存在')
-  const user: User = { ...input, id: 'u' + (db.users.length + 1), active: true, createdAt: new Date().toISOString(), lastLoginAt: '' }
+  if (input.role === 'regional' && !input.region) throw new ApiError(400, '区域侧账号必须选择所属区域')
+  const user: User = {
+    ...input,
+    orgId: input.role === 'vendor' ? input.orgId : null,
+    region: input.role === 'regional' ? (input.region ?? '华中') : null,
+    id: 'u' + (db.users.length + 1),
+    active: true,
+    createdAt: new Date().toISOString(),
+    lastLoginAt: '',
+  }
   db.users.push(user)
   return { user: clone(user), tempPassword: fakeSha(input.username, 12) }
 }
@@ -1058,7 +1103,7 @@ export async function updateVendor(
 }
 
 // PATCH /api/algorithms/{id} —— 原地更新算法信息与 algo.yaml，不触发大版本更新
-export async function updateAlgorithm(id: string, patch: Partial<Pick<Algorithm, 'summary' | 'tags' | 'task' | 'business' | 'framework' | 'readme'>>): Promise<Algorithm> {
+export async function updateAlgorithm(id: string, patch: Partial<Pick<Algorithm, 'summary' | 'tags' | 'task' | 'business' | 'framework' | 'readme' | 'selfDeveloped'>>): Promise<Algorithm> {
   await delay(300)
   requireAdmin()
   const a = db.algorithms.find((x) => x.id === id)
@@ -1308,14 +1353,16 @@ export async function updateBenchmark(id: string, patch: Partial<Pick<Benchmark,
 }
 
 // PATCH /api/admin/users/{id}
-export async function updateUser(id: string, patch: Partial<Pick<User, 'displayName' | 'email' | 'role' | 'orgId'>>): Promise<User> {
+export async function updateUser(id: string, patch: Partial<Pick<User, 'displayName' | 'email' | 'role' | 'orgId' | 'region'>>): Promise<User> {
   await delay(300)
   requireAdmin()
   const u = db.users.find((x) => x.id === id)
   if (!u) throw new ApiError(404, '用户不存在')
   const next = { ...u, ...patch }
   if (next.role === 'vendor' && !next.orgId) throw new ApiError(400, '厂商账号必须选择所属厂商')
+  if (next.role === 'regional' && !next.region) throw new ApiError(400, '区域侧账号必须选择所属区域')
   if (next.role !== 'vendor') next.orgId = null
+  if (next.role !== 'regional') next.region = null
   Object.assign(u, next)
   return clone(u)
 }
@@ -1367,6 +1414,128 @@ export async function reviewVersion(algoId: string, version: string, approve: bo
   } else v.buildLog.push(`[review] 已驳回：${note}`)
 }
 
+// ============ 总部算法下发 & 区域试用申请审批 ============
+/** 同步读取某算法当前已下发的区域列表（响应式，供卡片与详情页实时展示） */
+export function getDispatchedRegions(algorithmId: string): RegionName[] {
+  return db.dispatches.filter((d) => d.algorithmId === algorithmId).map((d) => d.region)
+}
+
+export function isDispatchedToRegion(algorithmId: string, region: RegionName | null): boolean {
+  if (!region) return false
+  return db.dispatches.some((d) => d.algorithmId === algorithmId && d.region === region)
+}
+
+export function getRegionTrialRequest(algorithmId: string, region: RegionName | null): RegionTrialRequest | undefined {
+  if (!region) return undefined
+  return db.trialRequests.find((r) => r.algorithmId === algorithmId && r.region === region)
+}
+
+export function getPendingTrialRegionsForAlgo(algorithmId: string): RegionName[] {
+  return db.trialRequests.filter((r) => r.algorithmId === algorithmId && r.status === 'pending').map((r) => r.region)
+}
+
+export async function listDispatches(): Promise<AlgorithmDispatch[]> {
+  await delay(80)
+  return clone(db.dispatches)
+}
+
+/** 总部管理员配置某算法的下发区域（勾选即下发、取消勾选即收回；新下发的区域若有待审批试用申请则自动通过） */
+export async function setAlgorithmDispatches(algorithmId: string, regions: RegionName[]): Promise<RegionName[]> {
+  await delay(200)
+  requireAdmin()
+  const algo = db.algorithms.find((a) => a.id === algorithmId)
+  if (!algo) throw new ApiError(404, '算法不存在')
+  const targetSet = new Set(regions)
+  const now = new Date().toISOString()
+  const operator = useSession().user.value.username
+
+  // 移除被取消的区域
+  for (let i = db.dispatches.length - 1; i >= 0; i--) {
+    if (db.dispatches[i].algorithmId === algorithmId && !targetSet.has(db.dispatches[i].region)) {
+      db.dispatches.splice(i, 1)
+    }
+  }
+  // 追加新增的区域
+  for (const rg of targetSet) {
+    if (!db.dispatches.some((d) => d.algorithmId === algorithmId && d.region === rg)) {
+      db.dispatches.push({ algorithmId, region: rg, dispatchedAt: now, dispatchedBy: operator, source: 'direct' })
+    }
+    // 若该区域存在待审批申请，同步标记为已通过
+    for (const req of db.trialRequests) {
+      if (req.algorithmId === algorithmId && req.region === rg && req.status === 'pending') {
+        req.status = 'approved'
+        req.reviewedAt = now
+        req.reviewedBy = operator
+        req.reviewNote = '总部已直接下发至该区域'
+      }
+    }
+  }
+  return getDispatchedRegions(algorithmId)
+}
+
+export async function listTrialRequests(filter: { status?: TrialRequestStatus; region?: RegionName; algorithmId?: string } = {}): Promise<RegionTrialRequest[]> {
+  await delay(80)
+  return clone(
+    db.trialRequests.filter((r) => {
+      if (filter.status && r.status !== filter.status) return false
+      if (filter.region && r.region !== filter.region) return false
+      if (filter.algorithmId && r.algorithmId !== filter.algorithmId) return false
+      return true
+    }),
+  )
+}
+
+/** 区域侧账号对未下发的已审核算法提交试用申请 */
+export async function submitTrialRequest(algorithmId: string, region: RegionName, reason: string): Promise<RegionTrialRequest> {
+  await delay(250)
+  const { user } = useSession()
+  const algo = db.algorithms.find((a) => a.id === algorithmId)
+  if (!algo) throw new ApiError(404, '算法不存在')
+  if (isDispatchedToRegion(algorithmId, region)) throw new ApiError(400, `该算法已下发至「${region}」区域，无需重复申请`)
+  if (db.trialRequests.some((r) => r.algorithmId === algorithmId && r.region === region && r.status === 'pending')) {
+    throw new ApiError(409, `「${region}」区域已提交试用申请，请等待总部审批`)
+  }
+  const trimmed = reason.trim()
+  if (!trimmed) throw new ApiError(400, '请填写试用场景与申请理由')
+  const req: RegionTrialRequest = {
+    id: `tr-${Date.now().toString().slice(-6)}`,
+    algorithmId,
+    region,
+    applicant: user.value.displayName,
+    reason: trimmed,
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+  }
+  db.trialRequests.unshift(req)
+  return clone(req)
+}
+
+/** 总部管理员审批区域试用申请：通过时自动下发至申请区域 */
+export async function reviewTrialRequest(requestId: string, approve: boolean, note: string): Promise<RegionTrialRequest> {
+  await delay(250)
+  requireAdmin()
+  const req = db.trialRequests.find((r) => r.id === requestId)
+  if (!req) throw new ApiError(404, '试用申请不存在')
+  if (req.status !== 'pending') throw new ApiError(400, '该申请已处理')
+  if (!approve && !note.trim()) throw new ApiError(400, '驳回时请填写原因')
+  const now = new Date().toISOString()
+  const operator = useSession().user.value.username
+  req.status = approve ? 'approved' : 'rejected'
+  req.reviewedAt = now
+  req.reviewedBy = operator
+  req.reviewNote = note.trim() || (approve ? '审批通过，已下发' : '')
+  if (approve && !db.dispatches.some((d) => d.algorithmId === req.algorithmId && d.region === req.region)) {
+    db.dispatches.push({
+      algorithmId: req.algorithmId,
+      region: req.region,
+      dispatchedAt: now,
+      dispatchedBy: operator,
+      source: 'approved_request',
+    })
+  }
+  return clone(req)
+}
+
 // ============ 全局搜索 ============
 export async function quickSearch(q: string) {
   await delay(80)
@@ -1383,11 +1552,12 @@ export async function quickSearch(q: string) {
 }
 
 export interface Overview {
-  algorithms: { total: number; versions: number; readyVersions: number; newLast30d: number }
+  algorithms: { total: number; versions: number; readyVersions: number; newLast30d: number; selfDeveloped: number }
   datasets: { total: number; samples: number; bytes: number }
   benchmarks: { total: number; leaderboardEntries: number }
   evals: { total: number; succeeded: number; last7d: number; running: number; queued: number }
   pendingReview: number
+  pendingTrialRequests: number
   trend: { date: string; succeeded: number; failed: number }[] // 近 30 天每日评测完成数
   byTask: { task: TaskType; algorithms: number; datasets: number }[]
   evalStatus: Record<EvalRun['status'], number>
@@ -1430,11 +1600,13 @@ export async function overview(): Promise<Overview> {
       versions: algos.reduce((s, a) => s + a.versions.length, 0),
       readyVersions: algos.reduce((s, a) => s + a.versions.filter((v) => v.status === 'ready').length, 0),
       newLast30d: algos.filter((a) => now - new Date(a.versions[a.versions.length - 1].createdAt).getTime() < 30 * DAY).length,
+      selfDeveloped: algos.filter((a) => !!a.selfDeveloped).length,
     },
     datasets: { total: dss.length, samples: dss.reduce((s, d) => s + d.train.versions[0].files + (d.test?.versions[0].files ?? 0), 0), bytes: dss.reduce((s, d) => s + d.train.versions[0].sizeBytes + (d.test?.versions[0].sizeBytes ?? 0), 0) },
     benchmarks: { total: db.benchmarks.length, leaderboardEntries: runs.filter((r) => r.isLatestValid).length },
     evals: { total: runs.length, succeeded: evalStatus.succeeded, last7d: runs.filter((r) => now - new Date(r.submittedAt).getTime() < 7 * DAY).length, running: evalStatus.running, queued: evalStatus.queued },
     pendingReview: db.algorithms.reduce((s, a) => s + a.versions.filter((v) => v.status === 'pending_review').length, 0),
+    pendingTrialRequests: db.trialRequests.filter((r) => r.status === 'pending').length,
     trend: trend.map(({ date, succeeded, failed }) => ({ date, succeeded, failed })),
     byTask,
     evalStatus,

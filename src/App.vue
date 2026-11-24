@@ -15,7 +15,7 @@ const { state } = useSession()
     <template v-if="!route.meta.bare">
       <AppHeader />
       <main :class="route.meta.fullBleed ? 'flex-1 min-h-0 overflow-hidden' : 'flex-1'">
-        <RouterView :key="route.path + '|' + state.role" />
+        <RouterView :key="route.path + '|' + state.role + '|' + state.region" />
       </main>
       <AppFooter v-if="!route.meta.fullBleed" />
     </template>

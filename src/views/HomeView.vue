@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowRight, Box, ClipboardCheck, Cpu, Database, FlaskConical, Trophy } from 'lucide-vue-next'
+import { ArrowRight, Box, ClipboardCheck, Cpu, Database, FlaskConical, MapPin, Send, Sparkles, Trophy } from 'lucide-vue-next'
 import { getQueueStatus, listAlgorithms, listBenchmarks, listDatasets, listEvals, overview } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
@@ -151,6 +151,19 @@ const businessDonutSlices = computed<DonutSlice[]>(() => {
           <span class="text-gray-300 dark:text-gray-700">|</span>
           <span>{{ ov?.evals.running ?? 0 }} 运行 · {{ ov?.evals.queued ?? 0 }} 排队</span>
         </span>
+        <span
+          v-if="state.role === 'regional'"
+          class="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 font-medium text-emerald-700 shadow-2xs dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300"
+        >
+          <MapPin class="size-3.5" />{{ state.region }}区域
+        </span>
+        <RouterLink
+          v-if="can.review && (ov?.pendingTrialRequests ?? 0) > 0"
+          to="/admin/dispatches"
+          class="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 font-medium text-sky-700 shadow-2xs hover:bg-sky-100 dark:border-sky-900 dark:bg-sky-950/50 dark:text-sky-300"
+        >
+          <Send class="size-3.5" />{{ ov?.pendingTrialRequests }} 待下发审批
+        </RouterLink>
         <RouterLink
           v-if="can.review && (ov?.pendingReview ?? 0) > 0"
           to="/admin/reviews"
@@ -170,7 +183,9 @@ const businessDonutSlices = computed<DonutSlice[]>(() => {
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline justify-between gap-2">
             <span class="text-xs text-gray-500">算法</span>
-            <span class="mono text-[11px] text-gray-400">{{ ov?.algorithms.readyVersions ?? 0 }}/{{ ov?.algorithms.versions ?? 0 }} 可用</span>
+            <span class="mono text-[11px] text-gray-400">
+              <span class="font-medium text-brand-600 dark:text-brand-400">自研 {{ ov?.algorithms.selfDeveloped ?? 0 }}</span> · {{ ov?.algorithms.readyVersions ?? 0 }}/{{ ov?.algorithms.versions ?? 0 }} 可用
+            </span>
           </div>
           <p class="text-xl leading-tight font-bold tracking-tight text-gray-900 tabular-nums dark:text-white">{{ ov?.algorithms.total ?? '–' }}</p>
         </div>
@@ -220,8 +235,16 @@ const businessDonutSlices = computed<DonutSlice[]>(() => {
     <section class="mt-3 grid gap-3 lg:grid-cols-12">
       <!-- 左上：算法总览（按任务类型分布） -->
       <div class="card flex flex-col p-4 shadow-xs lg:col-span-5">
-        <div class="mb-2 flex items-baseline justify-between">
-          <h2 class="text-xs font-semibold text-gray-900 dark:text-white">算法总览</h2>
+        <div class="mb-2 flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <h2 class="text-xs font-semibold text-gray-900 dark:text-white">算法总览</h2>
+            <RouterLink
+              to="/algorithms?selfDeveloped=only"
+              class="inline-flex items-center gap-0.5 rounded-full border border-brand-200 bg-brand-50 px-2 py-0.2 text-[10px] font-semibold text-brand-700 transition hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-950/60 dark:text-brand-300 dark:hover:bg-brand-900/60"
+            >
+              <Sparkles class="size-2.5" />自研 {{ ov?.algorithms.selfDeveloped ?? 0 }}
+            </RouterLink>
+          </div>
           <span class="mono text-[11px] text-gray-400">{{ ov?.algorithms.readyVersions ?? 0 }}/{{ ov?.algorithms.versions ?? 0 }} 可用 · 点击筛选</span>
         </div>
         <div class="flex flex-1 items-center py-1">

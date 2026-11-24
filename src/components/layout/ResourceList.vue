@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ChevronLeft, ChevronRight, Plus, Search, Settings2, Tag, X } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Plus, Search, Settings2, Sparkles, Tag, X } from 'lucide-vue-next'
 import type { Algorithm, BusinessCategory, Dataset, ListQuery, TaskType } from '@/types'
 import { listAlgorithms, listDatasets, listTags } from '@/api'
 import { useAsync } from '@/utils/useAsync'
@@ -26,6 +26,7 @@ const q = computed<ListQuery>(() => ({
   q: (route.query.q as string) || '',
   task: ((route.query.task as string) || '') as TaskType | '',
   business: ((route.query.business as string) || '') as BusinessCategory | '',
+  selfDeveloped: ((route.query.selfDeveloped as string) || '') as ListQuery['selfDeveloped'],
   tags: parseTags(route.query.tags),
   framework: (route.query.framework as string) || '',
   org: (route.query.org as string) || '',
@@ -90,6 +91,7 @@ interface ActiveFilter {
 const activeFilters = computed<ActiveFilter[]>(() => {
   const list: ActiveFilter[] = []
   if (q.value.task) list.push({ key: 'task', label: `任务：${TASKS[q.value.task as TaskType].label}`, clear: () => setQ({ task: '' }) })
+  if (q.value.selfDeveloped) list.push({ key: 'selfDeveloped', label: q.value.selfDeveloped === 'only' ? '来源：平台自研' : '来源：非自研', clear: () => setQ({ selfDeveloped: '' }) })
   if (q.value.business) list.push({ key: 'business', label: `业务：${BUSINESS_CATEGORIES[q.value.business as BusinessCategory].label}`, clear: () => setQ({ business: '' }) })
   for (const tg of q.value.tags ?? []) {
     list.push({ key: `tag:${tg}`, label: `# ${tg}`, clear: () => toggleTag(tg) })
@@ -134,6 +136,24 @@ const visibleTags = computed(() => {
         </div>
 
         <template v-if="kind === 'algorithm'">
+          <h3 class="mt-5 mb-2 text-sm font-medium text-gray-500">来源属性</h3>
+          <div class="flex flex-wrap gap-1.5">
+            <button
+              class="inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2.5 py-1 text-xs transition"
+              :class="q.selfDeveloped === 'only' ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50 dark:border-gray-800 dark:text-gray-300 dark:hover:bg-gray-900'"
+              @click="setQ({ selfDeveloped: q.selfDeveloped === 'only' ? '' : 'only' })"
+            >
+              <Sparkles class="size-3" :class="q.selfDeveloped === 'only' ? '' : 'text-brand-500'" />平台自研
+            </button>
+            <button
+              class="cursor-pointer rounded-lg border px-2.5 py-1 text-xs transition"
+              :class="q.selfDeveloped === 'external' ? 'border-gray-900 bg-gray-900 text-white dark:border-white dark:bg-white dark:text-gray-900' : 'border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50 dark:border-gray-800 dark:text-gray-300 dark:hover:bg-gray-900'"
+              @click="setQ({ selfDeveloped: q.selfDeveloped === 'external' ? '' : 'external' })"
+            >
+              外部 / 厂商
+            </button>
+          </div>
+
           <h3 class="mt-5 mb-2 text-sm font-medium text-gray-500">业务分类</h3>
           <div class="flex flex-wrap gap-1.5">
             <button

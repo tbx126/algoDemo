@@ -18,6 +18,7 @@ const f = reactive({
   task: 'object-detection' as TaskType,
   business: 'inspection' as BusinessCategory,
   framework: 'PyTorch' as Framework,
+  selfDeveloped: false,
   readme: '',
 })
 const tagSuggestions = ref<string[]>([])
@@ -31,6 +32,7 @@ watch(
       task: props.algo.task,
       business: props.algo.business ?? 'inspection',
       framework: props.algo.framework,
+      selfDeveloped: !!props.algo.selfDeveloped,
       readme: props.algo.readme,
     })
     tagSuggestions.value = (await listTags()).map((t) => t.name)
@@ -77,6 +79,10 @@ async function save() {
           </select>
         </div>
       </div>
+      <label class="flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+        <input v-model="f.selfDeveloped" type="checkbox" class="size-4 accent-brand-600" />
+        <span>标记为<strong>平台自研</strong>算法</span>
+      </label>
       <div>
         <label class="label" for="ea-sum">简介</label>
         <textarea id="ea-sum" v-model="f.summary" rows="2" class="input" />

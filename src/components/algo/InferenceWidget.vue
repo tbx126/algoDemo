@@ -8,7 +8,8 @@ import { TASKS } from '@/utils/meta'
 import { CLASS_COLORS, sampleImageDataUrl } from '@/utils/synth'
 import { hashStr } from '@/utils/format'
 
-const props = defineProps<{ algo: Algorithm }>()
+const props = defineProps<{ algo: Algorithm; lockedReason?: string; pendingTrial?: boolean }>()
+const emit = defineEmits<{ applyTrial: [] }>()
 const { can } = useSession()
 
 const readyVersions = computed(() => props.algo.versions.filter((v) => v.status === 'ready'))
@@ -156,6 +157,21 @@ const accept = computed(() => (isImageTask.value ? 'image/*' : props.algo.task =
       <Lock class="size-6 text-gray-400" />
       当前身份不能使用在线推理
       <RouterLink to="/login" class="btn-default mt-1">去登录</RouterLink>
+    </div>
+    <div v-else-if="lockedReason" class="flex flex-col items-center gap-2.5 px-5 py-9 text-center text-sm text-gray-600 dark:text-gray-400">
+      <Lock class="size-6 text-amber-500" />
+      <p class="leading-relaxed">{{ lockedReason }}</p>
+      <button
+        v-if="!pendingTrial"
+        type="button"
+        class="btn-brand mt-1 text-xs"
+        @click="emit('applyTrial')"
+      >
+        申请试用该算法
+      </button>
+      <span v-else class="chip border-amber-200 bg-amber-50 text-xs text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+        试用申请已提交，等待总部审批下发
+      </span>
     </div>
     <div v-else-if="!readyVersions.length" class="px-4 py-10 text-center text-sm text-gray-500">暂无可用版本（构建或审核未完成），无法推理</div>
 

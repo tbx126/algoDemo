@@ -1,6 +1,7 @@
 import { computed, reactive, watch } from 'vue'
-import type { Role } from '@/types'
+import type { RegionName, Role } from '@/types'
 import { demoIdentity, users } from '@/mock/orgs'
+import { REGIONS } from '@/utils/meta'
 
 const ROLE_KEYS: Role[] = ['admin', 'regional', 'demo', 'vendor']
 
@@ -13,8 +14,18 @@ function loadRole(): Role {
   }
 }
 
+function loadRegion(): RegionName {
+  try {
+    const v = JSON.parse(localStorage.getItem('algohub-region') ?? 'null')
+    return REGIONS.includes(v) ? v : '华中'
+  } catch {
+    return '华中'
+  }
+}
+
 const state = reactive({
   role: loadRole(),
+  region: loadRegion(),
   dark: document.documentElement.classList.contains('dark'),
 })
 
@@ -23,6 +34,16 @@ watch(
   (r) => {
     try {
       localStorage.setItem('algohub-role', JSON.stringify(r))
+    } catch {
+      /* ignore */
+    }
+  },
+)
+watch(
+  () => state.region,
+  (rg) => {
+    try {
+      localStorage.setItem('algohub-region', JSON.stringify(rg))
     } catch {
       /* ignore */
     }
@@ -40,7 +61,15 @@ watch(
   },
 )
 
-const user = computed(() => users.find((u) => u.id === demoIdentity[state.role])!)
+const user = computed(() => {
+  const base = users.find((u) => u.id === demoIdentity[state.role])!
+  if (state.role === 'regional') {
+    return { ...base, displayName: `${state.region}区域账号`, region: state.region }
+  }
+  return base
+})
+
+const currentRegion = computed<RegionName | null>(() => (state.role === 'regional' ? state.region : null))
 
 /**
  * 算法可见性：
@@ -68,10 +97,12 @@ const can = computed(() => {
     seeOthersOnBoard: r !== 'vendor', // 厂商在排行榜上只看到自己
     admin: r === 'admin',
     review: r === 'admin',
+    dispatch: r === 'admin',
+    applyTrial: r === 'regional',
     needsReview: r === 'vendor',
   }
 })
 
 export function useSession() {
-  return { state, user, can, canSeeAlgo }
+  return { state, user, currentRegion, can, canSeeAlgo }
 }
