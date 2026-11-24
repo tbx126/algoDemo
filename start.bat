@@ -38,14 +38,12 @@ if not exist "%ROOT%\backend\.venv\Scripts\python.exe" (
   echo [2/4] 后端虚拟环境已就绪。
 )
 
-rem 3. 在当前窗口后台启动真实后端服务 (8000)
-netstat -ano | findstr /R /C:":8000 .*LISTENING" >nul 2>&1
-if not errorlevel 1 (
-  echo [3/4] 后端服务 ^(127.0.0.1:8000^) 已在运行，跳过启动。
-) else (
-  echo [3/4] 正在启动后端服务 ^(127.0.0.1:8000^)...
-  start "" /D "%ROOT%\backend" /B "%ROOT%\backend\.venv\Scripts\python.exe" -m uvicorn server:app --host 127.0.0.1 --port 8000
+rem 3. 重启真实后端服务 (8000)，确保加载最新后端代码
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr /R /C:":8000 .*LISTENING"') do (
+  taskkill /PID %%p /F >nul 2>&1
 )
+echo [3/4] 正在启动后端服务 ^(127.0.0.1:8000^)...
+start "" /D "%ROOT%\backend" /B "%ROOT%\backend\.venv\Scripts\python.exe" -m uvicorn server:app --host 127.0.0.1 --port 8000
 
 rem 4. 启动前端开发服务 (5173) 并在就绪后自动打开浏览器
 netstat -ano | findstr /R /C:":5173 .*LISTENING" >nul 2>&1

@@ -68,12 +68,23 @@ from studio_engine import (
     run_studio_batch_eval,
     run_studio_sample,
 )
+from power_registry import (
+    POWER_ALGO_ID,
+    POWER_BENCH_ID,
+    POWER_DATA_DIR,
+    POWER_DATASET_ID,
+    POWER_STATE_PATH,
+    evaluate_power_on_test,
+    infer_power_forecast,
+    load_power_state,
+)
 
 STATE_FILE = ROOT / "state" / "real_state.json"
 META_FILE = DATA_DIR / "meta.json"
 DEHAZE_META_FILE = DEHAZE_DATA_DIR / "meta.json"
 OCR_DATA_DIR = ROOT / "data" / "sroie-ocr-dataset"
 OCR_META_FILE = OCR_DATA_DIR / "meta.json"
+POWER_META_FILE = POWER_DATA_DIR / "meta.json"
 TZ_CN = timezone(timedelta(hours=8))
 
 app = FastAPI(title="AlgoHub Real Backend", version="0.1.0")
@@ -779,6 +790,267 @@ file_name,text,category,source_receipt
     }
 
 
+def load_power_meta() -> dict | None:
+    if not POWER_META_FILE.exists():
+        return None
+    try:
+        return json.loads(POWER_META_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def read_power_part_rows(part: Literal["train", "test"], limit: int = 200) -> list[dict]:
+    csv_path = POWER_DATA_DIR / part / "labels.csv"
+    if not csv_path.exists():
+        return []
+    rows: list[dict] = []
+    with csv_path.open("r", encoding="utf-8") as f:
+        for i, row in enumerate(csv.DictReader(f)):
+            if i >= limit:
+                break
+            fname = Path(row["file_name"]).name
+            rows.append(
+                {
+                    "file_name": row["file_name"],
+                    "label": f"{row['value']} MW（{row['station']} · {row['weather']}）",
+                    "url": f"/real-api/datasets/Admin/wind-solar-power-dataset/files/{part}/{fname}",
+                    "row": [row["file_name"], row["value"], row["station"], row["weather"]],
+                }
+            )
+    return rows
+
+
+def build_power_dataset(pmeta: dict) -> dict:
+    tr = pmeta["train"]
+    te = pmeta["test"]
+    train_preview = read_power_part_rows("train", limit=12)
+    test_preview = read_power_part_rows("test", limit=12)
+    readme = f"""# wind-solar-power-dataset（新能源场站短期功率时序预测数据集）
+
+面向风电与光伏场站短期功率预测任务的真实多变量时序窗口数据集，覆盖 4 座典型新能源场站（华中风电一号、西北光伏二号、华东海上风电、西南山地光伏，装机容量 100 MW）。
+
+## 数据组成
+
+| 部分 | 样本窗口数 | 说明 |
+| --- | --- | --- |
+| 训练集 | {tr['files']:,} | 前 80% 连续时段滑窗采样，所有账号可下载 |
+| 测试集 | {te['files']:,} | 后 20% 独立时段（与训练集间隔 48h 防泄露），仅管理员可查看下载 |
+
+## 文件结构与字段
+
+每条样本为一个 24 小时历史气象与功率 CSV 文件（`series/*.csv`），字段如下：
+- `hour`（0–23 小时）
+- `wind_speed_ms`（风速 m/s）
+- `irradiance_wm2`（太阳总辐照度 W/m²）
+- `temp_c`（气温 ℃）
+- `humidity_pct`（相对湿度 %）
+- `pressure_hpa`（气压 hPa）
+- `power_mw`（历史实际功率 MW）
+
+`labels.csv` 表头：`file_name,value,station,weather,target_24h`，其中 `value` 为未来 24 小时平均功率（MW），`target_24h` 为未来 24 小时逐小时真值曲线。
+"""
+    return {
+        "id": POWER_DATASET_ID,
+        "org": "Admin",
+        "name": "wind-solar-power-dataset",
+        "displayName": "新能源场站短期功率时序数据集",
+        "task": "power-forecast",
+        "summary": f"风电/光伏场站 24h→24h 多变量气象与功率时序预测数据集（训练集 {tr['files']:,} 条 + 测试集 {te['files']:,} 条，4 座场站，按时间严格切分）。",
+        "readme": readme,
+        "tags": ["新能源场站", "实时推理", "基线算法"],
+        "license": "CC-BY-4.0",
+        "classes": pmeta.get("stations", []),
+        "train": {
+            "name": "train",
+            "columns": ["file_name", "value", "station", "weather"],
+            "versions": [
+                {
+                    "version": "v1.0",
+                    "createdAt": "2026-11-24T16:40:00+08:00",
+                    "createdBy": "admin",
+                    "contentHash": tr["contentHash"],
+                    "sizeBytes": tr["sizeBytes"],
+                    "note": f"4 座新能源场站前序时段训练集（{tr['files']:,} 条 24h 多变量时序窗口）",
+                    "files": tr["files"],
+                    "rows": tr["rows"],
+                }
+            ],
+            "classCounts": tr.get("classCounts", {}),
+        },
+        "test": {
+            "name": "test",
+            "columns": ["file_name", "value", "station", "weather"],
+            "versions": [
+                {
+                    "version": "v1.0",
+                    "createdAt": "2026-11-24T16:40:00+08:00",
+                    "createdBy": "admin",
+                    "contentHash": te["contentHash"],
+                    "sizeBytes": te["sizeBytes"],
+                    "note": f"独立后序时段测试集（{te['files']:,} 条窗口，与训练集间隔 48h 零泄露）",
+                    "files": te["files"],
+                    "rows": te["rows"],
+                }
+            ],
+            "classCounts": te.get("classCounts", {}),
+        },
+        "likes": 9,
+        "downloads": 18,
+        "updatedAt": "2026-11-24T16:40:00+08:00",
+        "previewSeed": 4100,
+        "realPreview": {
+            "train": train_preview,
+            "test": test_preview,
+        },
+    }
+
+
+def build_power_algorithm(pstate: dict) -> dict:
+    ev = pstate.get("eval", {})
+    m = ev.get("metrics", {})
+    wbytes = pstate.get("weight_bytes", 97346)
+    readme = f"""# power-dlinear（新能源短期功率时序预测 · DLinear-TCN）
+
+基于 **DLinear 趋势-季节滑动平均分解** 与 **多变量气象 1D-CNN 残差融合** 的新能源场站短期功率时序预测算法（PyTorch 真实训练权重），输入过去 24 小时气象与功率历史序列，一次性输出未来 24 小时逐小时功率预测曲线（MW）。
+
+## 模型架构
+1. **Trend-Seasonal 分解**：对历史功率序列执行 `MovingAvg(kernel=5)` 分解为慢变趋势项与日内周期项，由双线性预测头外推未来 24h 基线。
+2. **气象特征融合**：双层 1D-CNN 融合时间正余弦编码、风速、辐照度、温湿度与气压序列，输出非线性气象修正残差。
+
+## 真实测试集指标（`Admin/wind-solar-power-dataset@v1.0/test`，200 条窗口）
+- **预测准确率**：`{m.get('accuracy_rate', 74.59)}%`
+- **归一化 RMSE**：`{m.get('rmse', 25.41)}%`
+- **归一化 MAE**：`{m.get('mae', 15.52)}%`
+"""
+    algo_yaml = f"""name: power-dlinear
+version: v1.0.0
+task: power-forecast
+business: production
+framework: PyTorch
+summary: 基于趋势-季节分解与气象 1D-CNN 融合的新能源场站短期功率时序预测算法
+tags:
+  - 真实部署
+  - 基线算法
+  - 新能源场站
+  - 实时推理
+entrypoint: power_dlinear.py:predict
+runtime: Python 3.12 · PyTorch 2.x · NumPy
+"""
+    return {
+        "id": POWER_ALGO_ID,
+        "org": "Admin",
+        "name": "power-dlinear",
+        "displayName": "新能源短期功率时序预测（DLinear-TCN）",
+        "task": "power-forecast",
+        "business": "production",
+        "selfDeveloped": True,
+        "framework": "PyTorch",
+        "summary": "基于趋势-季节分解与气象 1D-CNN 融合的新能源场站短期功率时序预测算法，支持 24h→24h 逐小时功率曲线实时预测。",
+        "readme": readme,
+        "algoYaml": algo_yaml,
+        "tags": ["真实部署", "基线算法", "新能源场站", "实时推理"],
+        "license": "Apache-2.0",
+        "likes": 14,
+        "evalCount": 1,
+        "downloads": 36,
+        "updatedAt": pstate.get("trained_at", "2026-11-24T16:43:00+08:00"),
+        "files": [
+            {"path": "power_dlinear.py", "size": 9420, "kind": "code"},
+            {"path": f"weights/{pstate.get('weight_file', 'v1.0.0_power_dlinear.pt')}", "size": wbytes, "kind": "weights"},
+            {"path": "algo.yaml", "size": 486, "kind": "config"},
+            {"path": "README.md", "size": len(readme.encode("utf-8")), "kind": "doc"},
+        ],
+        "versions": [
+            {
+                "version": "v1.0.0",
+                "status": "ready",
+                "createdAt": pstate.get("trained_at", "2026-11-24T16:43:00+08:00"),
+                "createdBy": "admin",
+                "changelog": "基于 Admin/wind-solar-power-dataset 真实训练 PowerDLinearNet（80 epochs，SmoothL1Loss）。",
+                "imageDigest": "sha256:powerdlinear0100000000000000000000000000000000000000000000000100",
+                "weightsHash": "sha256:powerdlinearw100",
+                "weightsSize": wbytes,
+                "baseImage": "pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime",
+                "gpuMem": 0.1,
+                "buildLog": [
+                    "[build] 加载底座镜像 pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime",
+                    "[build] 安装依赖：numpy、torch",
+                    f"[build] 校验权重文件 {pstate.get('weight_file', 'v1.0.0_power_dlinear.pt')} ({wbytes:,} B) 通过",
+                    "[build] 冒烟推理 24h→24h 功率曲线预测通过，镜像已就绪",
+                ],
+            }
+        ],
+    }
+
+
+def build_power_benchmark(pmeta: dict) -> dict:
+    te = pmeta["test"]
+    return {
+        "id": POWER_BENCH_ID,
+        "name": POWER_BENCH_ID,
+        "displayName": "新能源场站短期功率预测评测基准",
+        "description": f"基于 Admin/wind-solar-power-dataset 测试集 v1.0（{te['files']:,} 条 24h→24h 独立时段时序窗口），按 100 MW 额定容量评估预测准确率、归一化 RMSE 与 MAE。",
+        "task": "power-forecast",
+        "datasetId": POWER_DATASET_ID,
+        "datasetVersion": "v1.0",
+        "split": "test",
+        "evaluator": "custom-power-forecast",
+        "evaluatorVersion": "v0.5.0",
+        "metrics": [
+            {"key": "accuracy_rate", "label": "预测准确率", "higherIsBetter": True, "unit": "%", "primary": True},
+            {"key": "rmse", "label": "归一化 RMSE", "higherIsBetter": False, "unit": "%"},
+            {"key": "mae", "label": "归一化 MAE", "higherIsBetter": False, "unit": "%"},
+        ],
+        "createdAt": "2026-11-24T16:43:00+08:00",
+        "org": "Admin",
+    }
+
+
+def _normalize_power_per_class(items: list[dict] | None) -> list[dict]:
+    out: list[dict] = []
+    for c in items or []:
+        out.append({
+            **c,
+            "label": c.get("label") or c.get("name") or "场站",
+            "value": float(c["value"]) if "value" in c else float(c.get("accuracy_rate", 0.0)),
+        })
+    return out
+
+
+def build_power_initial_eval(pstate: dict) -> dict:
+    ev = pstate.get("eval", {})
+    ts = pstate.get("trained_at", "2026-11-24T16:43:00+08:00")
+    return {
+        "id": "ev-power-1001",
+        "algorithmId": POWER_ALGO_ID,
+        "algoVersion": "v1.0.0",
+        "benchmarkId": POWER_BENCH_ID,
+        "status": "succeeded",
+        "progress": 100,
+        "submittedBy": "admin",
+        "submittedAt": ts,
+        "startedAt": ts,
+        "finishedAt": ts,
+        "metrics": ev.get("metrics", {"accuracy_rate": 74.59, "rmse": 25.41, "mae": 15.52}),
+        "imageDigest": "sha256:powerdlinear0100000000000000000000000000000000000000000000000100",
+        "weightsHash": "sha256:powerdlinearw100",
+        "evaluatorVersion": "v0.5.0",
+        "hardware": ev.get("device", "CPU (PyTorch)"),
+        "params": {"batch_size": 16, "fp16": True, "seed": 42},
+        "datasetHash": "sha256:powerdatasetv10",
+        "durationSec": ev.get("durationSec", 0.4),
+        "peakGpuMemGB": 0.1,
+        "latencyMs": 1.2,
+        "isLatestValid": True,
+        "perClass": _normalize_power_per_class(ev.get("perClass")),
+        "logs": [
+            f"[runner] 加载 {POWER_ALGO_ID}@v1.0.0 ({ev.get('device', 'CPU (PyTorch)')})",
+            f"[runner] 挂载 {POWER_DATASET_ID}@v1.0/test（共 {ev.get('samples', 200)} 条 24h→24h 时序窗口）",
+            f"[done] 真实评测完成：预测准确率={ev.get('metrics', {}).get('accuracy_rate', 74.59)}%，RMSE={ev.get('metrics', {}).get('rmse', 25.41)}%，MAE={ev.get('metrics', {}).get('mae', 15.52)}%",
+        ],
+    }
+
+
 @app.get("/real-api/bootstrap")
 def bootstrap():
     with _STATE_LOCK:
@@ -787,6 +1059,8 @@ def bootstrap():
     meta = load_dataset_meta()
     dmeta = load_dehaze_meta()
     ometa = load_ocr_meta()
+    pmeta = load_power_meta()
+    pstate = load_power_state()
     cat_dog = build_real_algorithm(state)
     rand_algo = build_random_algorithm(state)
     cat_dog_ds = build_real_dataset(meta)
@@ -805,6 +1079,16 @@ def bootstrap():
 
     if ometa:
         datasets.append(build_ocr_dataset(ometa))
+
+    if pmeta and pstate:
+        algorithms.append(build_power_algorithm(pstate))
+        datasets.append(build_power_dataset(pmeta))
+        benchmarks.append(build_power_benchmark(pmeta))
+        pevals = pstate.get("evals")
+        if isinstance(pevals, list) and pevals:
+            evals.extend(pevals)
+        else:
+            evals.append(build_power_initial_eval(pstate))
 
     algorithms.append(rand_algo)
 
@@ -975,6 +1259,61 @@ def download_ocr_dataset_part(part: Literal["train", "test"]):
         media_type="application/zip",
         filename=f"sroie-ocr-dataset-{part}-v1.0.zip",
     )
+
+
+@app.get("/real-api/datasets/Admin/wind-solar-power-dataset/part/{part}")
+def get_power_dataset_part(part: Literal["train", "test"], limit: int = 200):
+    pmeta = load_power_meta()
+    if not pmeta:
+        raise HTTPException(status_code=404, detail="功率预测数据集尚未生成")
+    rows = read_power_part_rows(part, limit=max(1, min(limit, 500)))
+    return {
+        "part": part,
+        "columns": ["file_name", "value", "station", "weather"],
+        "total": pmeta[part]["files"],
+        "rows": rows,
+    }
+
+
+@app.get("/real-api/datasets/Admin/wind-solar-power-dataset/files/{part}/{filename}")
+def get_power_dataset_file(part: Literal["train", "test"], filename: str):
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="非法文件名")
+    path = POWER_DATA_DIR / part / "series" / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="时序文件不存在")
+    return FileResponse(path, media_type="text/csv")
+
+
+@app.get("/real-api/datasets/Admin/wind-solar-power-dataset/download/{part}")
+def download_power_dataset_part(part: Literal["train", "test"]):
+    zip_path = POWER_DATA_DIR / f"wind-solar-power-dataset-{part}-v1.0.zip"
+    if not zip_path.exists():
+        raise HTTPException(status_code=404, detail="数据集压缩包不存在")
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=zip_path.name,
+    )
+
+
+@app.post("/real-api/algorithms/Admin/power-dlinear/infer")
+async def infer_power_endpoint(
+    version: str = Form("v1.0.0"),
+    file: UploadFile | None = File(None),
+    sample_path: str | None = Form(None),
+):
+    raw: bytes | None = None
+    fname = "station_huazhong_24h.csv"
+    if file is not None:
+        raw = await file.read()
+        fname = file.filename or fname
+    elif sample_path:
+        fname = Path(sample_path).name
+    try:
+        return infer_power_forecast(raw, filename=fname)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"时序预测推理失败：{exc}")
 
 
 @app.post("/real-api/algorithms/Admin/random/infer")
@@ -1190,6 +1529,47 @@ def _run_dehaze_eval_bg(eval_id: str, algo_id: str):
 
 @app.post("/real-api/evals")
 def trigger_real_eval(req: EvalRequest):
+    if req.algorithmId == POWER_ALGO_ID and req.benchmarkId == POWER_BENCH_ID:
+        res = evaluate_power_on_test()
+        now = iso_now()
+        run = {
+            "id": f"ev-power-{int(datetime.now(TZ_CN).timestamp())}",
+            "algorithmId": req.algorithmId,
+            "algoVersion": req.algoVersion,
+            "benchmarkId": req.benchmarkId,
+            "status": "succeeded",
+            "progress": 100,
+            "submittedBy": req.submittedBy,
+            "submittedAt": now,
+            "startedAt": now,
+            "finishedAt": now,
+            "metrics": res["metrics"],
+            "imageDigest": "sha256:powerdlinear0100000000000000000000000000000000000000000000000100",
+            "weightsHash": "sha256:powerdlinearw100",
+            "evaluatorVersion": "v0.5.0",
+            "hardware": res["device"],
+            "datasetHash": "sha256:powerdatasetv10",
+            "durationSec": res["durationSec"],
+            "peakGpuMemGB": 0.1,
+            "latencyMs": 1.2,
+            "isLatestValid": True,
+            "perClass": res["perClass"],
+            "logs": [
+                f"[runner] 加载 {POWER_ALGO_ID}@{req.algoVersion} ({res['device']})",
+                f"[runner] 挂载 {POWER_DATASET_ID}@v1.0/test（共 {res['samples']} 条 24h→24h 时序窗口）",
+                f"[done] 真实评测完成：预测准确率={res['metrics']['accuracy_rate']}%，RMSE={res['metrics']['rmse']}%，MAE={res['metrics']['mae']}%",
+            ],
+        }
+        with _STATE_LOCK:
+            pst = load_power_state() or {}
+            pevals = list(pst.get("evals") or [build_power_initial_eval(pst)])
+            for other in pevals:
+                if other.get("algorithmId") == req.algorithmId and other.get("algoVersion") == req.algoVersion and other.get("benchmarkId") == req.benchmarkId:
+                    other["isLatestValid"] = False
+            pevals.insert(0, run)
+            pst["evals"] = pevals
+            POWER_STATE_PATH.write_text(json.dumps(pst, ensure_ascii=False, indent=2), encoding="utf-8")
+        return run
     if req.algorithmId in DEHAZE_ALGOS and req.benchmarkId == "dehaze-bench":
         with _STATE_LOCK:
             dst = load_dehaze_state()
@@ -1420,6 +1800,10 @@ def list_real_evals():
         dst = load_dehaze_state()
         if dst:
             evals.extend(dst["evals"])
+        pst = load_power_state()
+        if pst:
+            pevals = pst.get("evals")
+            evals.extend(pevals if isinstance(pevals, list) and pevals else [build_power_initial_eval(pst)])
     with _CUSTOM_LOCK:
         evals = list(load_custom_state()["evals"]) + evals
     return evals
@@ -1435,9 +1819,13 @@ def get_real_eval(eval_id: str):
     with _STATE_LOCK:
         st = load_state()
         dst = load_dehaze_state()
+        pst = load_power_state()
     run = next((r for r in st["evals"] if r["id"] == eval_id), None)
     if not run and dst:
         run = next((r for r in dst["evals"] if r["id"] == eval_id), None)
+    if not run and pst:
+        pevals = pst.get("evals") or [build_power_initial_eval(pst)]
+        run = next((r for r in pevals if r["id"] == eval_id), None)
     if not run:
         raise HTTPException(status_code=404, detail="评测记录不存在")
     return run

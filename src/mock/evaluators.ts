@@ -172,7 +172,7 @@ export const evaluators: Evaluator[] = [
     version: 'v0.5.0',
     kind: 'custom',
     task: 'power-forecast',
-    status: 'uninitialized',
+    status: 'ready',
     description: '按新能源场站装机容量归一化计算功率预测 RMSE、MAE 与考核准确率，适用于风电/光伏短期及超短期功率预测算法。',
     entrypoint: 'evaluators/power_forecast.py:evaluate_power',
     runtime: 'Python 3.12 · NumPy 2.x',

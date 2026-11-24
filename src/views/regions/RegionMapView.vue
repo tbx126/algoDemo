@@ -8,7 +8,6 @@ import {
   Maximize2,
   Search,
   Send,
-  Sparkles,
   X,
   ZoomIn,
   ZoomOut,
@@ -23,9 +22,10 @@ import {
   setAlgorithmDispatches,
 } from '@/api'
 import { CHINA_MAP_HEIGHT, CHINA_MAP_WIDTH, CHINA_REGIONS } from '@/assets/chinaMapData'
-import type { Algorithm, AlgorithmDispatch, RegionName, RegionTrialRequest } from '@/types'
+import type { Algorithm, AlgorithmDispatch, RegionName, RegionTrialRequest, TaskType } from '@/types'
 import { REGIONS, TASKS } from '@/utils/meta'
 import { algoName } from '@/utils/display'
+import { layoutRegionLabels, type RegionLabelLayout } from '@/utils/regionLabelLayout'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
 import TaskIcon from '@/components/ui/TaskIcon.vue'
@@ -86,6 +86,15 @@ const sortedRegionList = computed(() =>
     .map((rg) => regionSummaries.value[rg])
     .sort((a, b) => b.algos.length - a.algos.length || b.pendingRequests.length - a.pendingRequests.length),
 )
+
+/** 为 14 区域预计算「贴合地块轮廓 + 匹配算法名长度」的贴地坐标排版 */
+const regionLayouts = computed<Record<RegionName, RegionLabelLayout<{ algo: Algorithm; dispatch: AlgorithmDispatch }>>>(() => {
+  const out = {} as Record<RegionName, RegionLabelLayout<{ algo: Algorithm; dispatch: AlgorithmDispatch }>>
+  for (const rg of REGIONS) {
+    out[rg] = layoutRegionLabels(rg, regionSummaries.value[rg].algos, (x) => algoName(x.algo))
+  }
+  return out
+})
 
 const totalCoveredRegions = computed(() => REGIONS.filter((rg) => regionSummaries.value[rg].algos.length > 0).length)
 const totalAuthLinks = computed(() => dispatches.value.length)
@@ -157,6 +166,34 @@ function mapNameFill(rg: RegionName): string {
   if (hasAlgos) return isDark ? 'rgba(226, 232, 240, 0.88)' : 'rgba(30, 41, 59, 0.78)'
   return isDark ? 'rgba(148, 163, 184, 0.6)' : 'rgba(100, 116, 139, 0.65)'
 }
+
+const TASK_DOT_CLS: Record<TaskType, string> = {
+  'image-classification': 'bg-sky-500/85 dark:bg-sky-400/90',
+  'image-dehazing': 'bg-cyan-500/85 dark:bg-cyan-400/90',
+  'object-detection': 'bg-amber-500/85 dark:bg-amber-400/90',
+  'semantic-segmentation': 'bg-emerald-500/85 dark:bg-emerald-400/90',
+  'instance-segmentation': 'bg-teal-500/85 dark:bg-teal-400/90',
+  'keypoint-detection': 'bg-rose-500/85 dark:bg-rose-400/90',
+  ocr: 'bg-violet-500/85 dark:bg-violet-400/90',
+  'power-forecast': 'bg-indigo-500/85 dark:bg-indigo-400/90',
+  'signal-processing': 'bg-orange-500/85 dark:bg-orange-400/90',
+  optimization: 'bg-lime-500/85 dark:bg-lime-400/90',
+  custom: 'bg-slate-400/85 dark:bg-slate-400/90',
+}
+
+/** 放大后地块标签的焦点透明度：当前选中/悬停区域清晰突出，周边区域自然退居次层 */
+function regionLabelOpacity(rg: RegionName): number {
+  if (searchQ.value && !matchedRegions.value.has(rg)) return 0.16
+  const focus = hoveredRegion.value ?? selectedRegion.value
+  if (!focus) return 0.84
+  return focus === rg ? 0.98 : 0.48
+}
+
+/** 放大后算法名称字号随缩放倍率平滑舒展（10.5px ~ 13.5px） */
+const algoLabelFontSize = computed(() => {
+  const px = Math.min(13.5, Math.max(10.5, 9.0 + viewport.zoom * 1.15))
+  return `${px.toFixed(1)}px`
+})
 
 // ==================== 地图交互：平滑缩放、拖拽平移、语义层级（LOD） ====================
 const mapContainerEl = ref<HTMLElement>()
@@ -563,66 +600,34 @@ const svgTransformStyle = computed(() => {
         </svg>
       </div>
 
-      <!-- 模式 B：放大后（zoom >= 1.55）直接在地块上展示算法名称（无弹窗、无白底卡片） -->
+      <!-- 模式 B：放大后（zoom >= 1.55）仅直接在地块上按轮廓分布算法完整名称（不显示区域名/数量，不标注自研） -->
       <div v-if="isDetailMode" class="pointer-events-none absolute inset-0 z-10 overflow-hidden">
         <template v-for="rg in REGIONS" :key="'ov-' + rg">
-          <div
-            v-if="CHINA_REGIONS[rg]"
-            data-map-hud="1"
-            class="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 text-center"
-            :class="[
-              { 'transition-all duration-300 ease-out': animating },
-              searchQ && !matchedRegions.has(rg) ? 'opacity-25' : 'opacity-100',
-              selectedRegion === rg ? 'z-20' : 'z-10',
-            ]"
-            :style="{
-              left: Math.round(mapToScreen(CHINA_REGIONS[rg].cx, CHINA_REGIONS[rg].cy).x) + 'px',
-              top: Math.round(mapToScreen(CHINA_REGIONS[rg].cx, CHINA_REGIONS[rg].cy).y) + 'px',
-            }"
-          >
-            <!-- 地块标题（无边框、透明贴地） -->
-            <div
-              class="carto-text-halo mb-1 flex items-center justify-center gap-1 text-xs font-bold tracking-[0.2em]"
-              :class="selectedRegion === rg ? 'text-brand-700 dark:text-brand-300' : 'text-gray-700 dark:text-gray-200'"
+          <template v-if="CHINA_REGIONS[rg] && regionLayouts[rg]">
+            <!-- 逐项贴合地块轮廓自然分布的算法完整名称 -->
+            <RouterLink
+              v-for="p in regionLayouts[rg].placed"
+              :key="rg + '-' + p.item.algo.id"
+              data-map-hud="1"
+              :to="`/algorithms/${p.item.algo.id}`"
+              class="carto-algo-label carto-text-halo pointer-events-auto absolute inline-flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-full px-1.5 py-0.5 font-medium whitespace-nowrap text-slate-700/90 transition-[color,opacity,background-color] duration-150 hover:z-30 hover:bg-white/80 hover:font-semibold hover:text-brand-700 hover:opacity-100 hover:shadow-2xs dark:text-slate-200/85 dark:hover:bg-slate-900/80 dark:hover:text-brand-300"
+              :class="[
+                { 'transition-all duration-300 ease-out': animating },
+                selectedRegion === rg || hoveredRegion === rg ? 'z-20' : 'z-10',
+              ]"
+              :style="{
+                left: Math.round(mapToScreen(p.mx, p.my).x) + 'px',
+                top: Math.round(mapToScreen(p.mx, p.my).y + p.jitterY) + 'px',
+                fontSize: algoLabelFontSize,
+                opacity: regionLabelOpacity(rg),
+              }"
+              @mouseenter="hoveredRegion = rg"
+              @mouseleave="hoveredRegion = null"
             >
-              <span v-if="currentRegion === rg" class="inline-block size-1.5 rounded-full bg-emerald-500" title="当前登录区域" />
-              <span>{{ rg }}</span>
-              <span class="mono text-[10px] font-semibold tracking-normal opacity-75">({{ regionSummaries[rg].algos.length }})</span>
-            </div>
-
-            <!-- 直接贴地显示的授权算法名称列表 -->
-            <div v-if="regionSummaries[rg].algos.length" class="flex flex-col items-center gap-0.5">
-              <RouterLink
-                v-for="{ algo } in regionSummaries[rg].algos.slice(0, 6)"
-                :key="algo.id"
-                :to="`/algorithms/${algo.id}`"
-                class="carto-text-halo pointer-events-auto inline-flex max-w-[190px] items-center gap-1 rounded px-1 py-0.2 text-[12px] font-semibold text-gray-900 transition hover:text-brand-600 hover:underline dark:text-white dark:hover:text-brand-300"
-                @mouseenter="hoveredRegion = rg"
-                @mouseleave="hoveredRegion = null"
-              >
-                <TaskIcon :task="algo.task" class="size-3 shrink-0" :class="TASKS[algo.task].color" />
-                <span class="truncate">{{ algoName(algo) }}</span>
-                <span
-                  v-if="algo.selfDeveloped"
-                  class="shrink-0 text-[10px] font-bold text-brand-600 dark:text-brand-300"
-                >·自研</span>
-              </RouterLink>
-              <span
-                v-if="regionSummaries[rg].algos.length > 6"
-                class="carto-text-halo text-[10px] font-medium text-gray-500 dark:text-gray-400"
-              >
-                + 另有 {{ regionSummaries[rg].algos.length - 6 }} 项
-              </span>
-            </div>
-            <p v-else class="carto-text-halo text-[11px] font-medium text-gray-400 dark:text-gray-500">暂无授权算法</p>
-
-            <p
-              v-if="regionSummaries[rg].pendingRequests.length"
-              class="carto-text-halo mt-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400"
-            >
-              ● {{ regionSummaries[rg].pendingRequests.length }} 项待审批
-            </p>
-          </div>
+              <span class="size-1.5 shrink-0 rounded-full" :class="TASK_DOT_CLS[p.item.algo.task]" />
+              <span>{{ algoName(p.item.algo) }}</span>
+            </RouterLink>
+          </template>
         </template>
       </div>
 
@@ -758,9 +763,6 @@ const svgTransformStyle = computed(() => {
                 <RouterLink :to="`/algorithms/${algo.id}`" class="truncate font-medium text-gray-900 hover:text-brand-600 dark:text-white dark:hover:text-brand-400">
                   {{ algoName(algo) }}
                 </RouterLink>
-                <span v-if="algo.selfDeveloped" class="inline-flex shrink-0 items-center gap-0.5 rounded border border-brand-200 bg-brand-50 px-1.5 py-0.2 text-[10px] font-semibold text-brand-700 dark:border-brand-800 dark:bg-brand-950/60 dark:text-brand-300">
-                  <Sparkles class="size-2.5" />自研
-                </span>
                 <button
                   v-if="can.dispatch"
                   type="button"
@@ -851,18 +853,24 @@ const svgTransformStyle = computed(() => {
   font-variant-numeric: lining-nums tabular-nums;
 }
 
-/* 放大后直接贴地显示的无弹窗文字描边光晕，保证任意地块底色下清晰可读 */
+.carto-algo-label {
+  font-family: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+}
+
+/* 放大后直接贴地显示的柔和地图文字光晕，自然融入地块底色 */
 .carto-text-halo {
   text-shadow:
-    0 0 3px rgba(255, 255, 255, 0.96),
-    0 0 7px rgba(255, 255, 255, 0.9),
-    0 1px 2px rgba(255, 255, 255, 0.95);
+    0 0 2.5px rgba(255, 255, 255, 0.88),
+    0 0 6px rgba(255, 255, 255, 0.65),
+    0 1px 1.5px rgba(255, 255, 255, 0.78);
 }
 
 :global(.dark) .carto-text-halo {
   text-shadow:
-    0 0 3px rgba(15, 23, 42, 0.96),
-    0 0 7px rgba(15, 23, 42, 0.92),
-    0 1px 2px rgba(15, 23, 42, 0.95);
+    0 0 3px rgba(15, 23, 42, 0.92),
+    0 0 7px rgba(15, 23, 42, 0.72),
+    0 1px 1.5px rgba(15, 23, 42, 0.85);
 }
 </style>

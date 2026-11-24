@@ -36,15 +36,19 @@ import { benchmarks as B0 } from '@/mock/benchmarks'
 import { evalRuns as E0 } from '@/mock/evals'
 import { evaluators as EV0 } from '@/mock/evaluators'
 import { orgs as O0, users as U0 } from '@/mock/orgs'
+import realBootstrapSnapshot from '@/mock/realBootstrapSnapshot.json'
 import { useSession } from '@/stores/session'
 import { fakeSha, hashStr, rng } from '@/utils/format'
 import { algoFullLabel } from '@/utils/display'
+import { REGIONS } from '@/utils/meta'
 
 // ---------- 原型数据持久化 ----------
 // 写操作（新建厂商、上传数据集、编辑信息等）保存到浏览器 localStorage，刷新后仍在。
 // 恢复时就地替换 mock 数组的内容，直接引用 mock 的组件（如头像、基准名称）也能看到最新数据。
 const STORE_KEY = 'algohub-db-v6'
 const TAG_CLEAN_KEY = 'algohub-tags-cleaned-v1'
+const DISPATCH_ALL_KEY = 'algohub-dispatch-all-v1'
+const DISPATCH_ALL_REAL_KEY = 'algohub-dispatch-all-real-v2'
 const DEFAULT_TAGS = ['真实部署', '基线算法', '高精度', '实时推理', '边缘端', '新能源场站', '可见光巡检', '表计读数', '状态识别']
 const LEGACY_NOISY_TAGS = new Set([
   '猫狗识别', '图像分类', '安防周界', '图像去雾', '传统物理先验', '暗通道', 'CPU',
@@ -54,26 +58,16 @@ const LEGACY_NOISY_TAGS = new Set([
 ])
 const T0: string[] = [...DEFAULT_TAGS]
 const DEL0: string[] = []
-const DISP0: AlgorithmDispatch[] = [
-  { algorithmId: 'Admin/dehaze-deanet', region: '华中', dispatchedAt: '2026-11-21T10:00:00+08:00', dispatchedBy: 'admin', source: 'direct' },
-  { algorithmId: 'Admin/dehaze-deanet', region: '华东', dispatchedAt: '2026-11-21T10:00:00+08:00', dispatchedBy: 'admin', source: 'direct' },
-  { algorithmId: 'Admin/dehaze-deanet', region: '华北', dispatchedAt: '2026-11-21T10:00:00+08:00', dispatchedBy: 'admin', source: 'direct' },
-  { algorithmId: 'Admin/cat-dog-classifier', region: '华中', dispatchedAt: '2026-11-21T14:20:00+08:00', dispatchedBy: 'admin', source: 'direct' },
-  { algorithmId: 'Admin/cat-dog-classifier', region: '西南', dispatchedAt: '2026-11-21T14:20:00+08:00', dispatchedBy: 'admin', source: 'direct' },
-  { algorithmId: 'Admin/dehaze-ffanet', region: '华东', dispatchedAt: '2026-11-22T09:15:00+08:00', dispatchedBy: 'admin', source: 'direct' },
-  { algorithmId: 'Admin/dehaze-ffanet', region: '山东', dispatchedAt: '2026-11-22T09:15:00+08:00', dispatchedBy: 'admin', source: 'direct' },
-]
-const TRIAL0: RegionTrialRequest[] = [
-  {
-    id: 'tr-1001',
-    algorithmId: 'Admin/dehaze-deanet',
-    region: '山东',
-    applicant: '山东区域账号',
-    reason: '拟在山东区域新能源场站雾天可见光巡检链路中开展试点验证。',
-    status: 'pending',
-    createdAt: '2026-11-23T09:30:00+08:00',
-  },
-]
+const DISP0: AlgorithmDispatch[] = A0.flatMap((a) =>
+  REGIONS.map((region) => ({
+    algorithmId: a.id,
+    region,
+    dispatchedAt: '2026-11-24T12:00:00+08:00',
+    dispatchedBy: 'admin',
+    source: 'direct' as const,
+  })),
+)
+const TRIAL0: RegionTrialRequest[] = []
 const SOURCES = { algorithms: A0, datasets: D0, benchmarks: B0, evals: E0, evaluators: EV0, orgs: O0, users: U0, tags: T0, deletedRealIds: DEL0, dispatches: DISP0, trialRequests: TRIAL0 }
 type DbKey = keyof typeof SOURCES
 try {
@@ -103,9 +97,57 @@ try {
 const DEFAULT_SELF_DEVELOPED_IDS = new Set(['Admin/cat-dog-classifier', 'Admin/dehaze-dcp'])
 for (const a of SOURCES.algorithms) {
   if (!a.business) a.business = 'inspection'
+  if (!Array.isArray(a.files)) a.files = []
   if (a.selfDeveloped === undefined && DEFAULT_SELF_DEVELOPED_IDS.has(a.id)) a.selfDeveloped = true
+  for (const v of a.versions ?? []) {
+    if (v.gpuMem === undefined) v.gpuMem = a.id === 'Admin/power-dlinear' ? 0.1 : 1
+    if (!Array.isArray(v.buildLog)) v.buildLog = []
+    if (!v.baseImage) v.baseImage = 'pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime'
+    if (v.weightsSize === undefined) v.weightsSize = a.id === 'Admin/power-dlinear' ? 97346 : 0
+  }
+  if (a.id === 'Admin/power-dlinear' && a.files.length === 0) {
+    a.files = [
+      { path: 'power_dlinear.py', size: 9420, kind: 'code' },
+      { path: 'weights/v1.0.0_power_dlinear.pt', size: 97346, kind: 'weights' },
+      { path: 'algo.yaml', size: 486, kind: 'config' },
+      { path: 'README.md', size: 960, kind: 'doc' },
+    ]
+    if (!a.algoYaml) {
+      a.algoYaml = `name: power-dlinear\nversion: v1.0.0\ntask: power-forecast\nbusiness: production\nframework: PyTorch\nentrypoint: power_dlinear.py:predict\n`
+    }
+  }
 }
 for (const t of SOURCES.algorithms.flatMap((a) => a.tags)) if (t && !SOURCES.tags.includes(t)) SOURCES.tags.push(t)
+
+/** 将给定算法列表全量授权至全部 14 区域，并清理重复待审批记录 */
+function ensureAllRegionsDispatched(algos: Algorithm[], dispatches: AlgorithmDispatch[], trials: RegionTrialRequest[]) {
+  const existing = new Set(dispatches.map((d) => `${d.algorithmId}::${d.region}`))
+  const now = '2026-11-24T12:00:00+08:00'
+  for (const a of algos) {
+    for (const region of REGIONS) {
+      const key = `${a.id}::${region}`
+      if (!existing.has(key)) {
+        dispatches.push({ algorithmId: a.id, region, dispatchedAt: now, dispatchedBy: 'admin', source: 'direct' })
+        existing.add(key)
+      }
+    }
+  }
+  for (let i = trials.length - 1; i >= 0; i--) {
+    if (trials[i].status === 'pending' && existing.has(`${trials[i].algorithmId}::${trials[i].region}`)) {
+      trials.splice(i, 1)
+    }
+  }
+}
+
+// 一次性迁移：为全部 14 区域全量授权所有算法
+try {
+  if (!localStorage.getItem(DISPATCH_ALL_KEY)) {
+    ensureAllRegionsDispatched(SOURCES.algorithms, SOURCES.dispatches, SOURCES.trialRequests)
+    localStorage.setItem(DISPATCH_ALL_KEY, '1')
+  }
+} catch {
+  /* ignore */
+}
 const regionalUser = SOURCES.users.find((u) => u.id === 'u4')
 if (!regionalUser) {
   SOURCES.users.splice(1, 0, { id: 'u4', username: 'regional', displayName: '华中区域账号', email: 'huazhong@algohub.local', role: 'regional', orgId: null, region: '华中', active: true, createdAt: '2026-11-20T15:25:00+08:00', lastLoginAt: '' })
@@ -119,7 +161,7 @@ if (!regionalUser) {
  * 仅原地更新配置字段，不改动 version 字段，也不触发新版本发布。
  */
 function syncAlgoYaml(a: Pick<Algorithm, 'algoYaml' | 'task' | 'business' | 'framework' | 'tags' | 'summary'>): string {
-  const lines = a.algoYaml.replace(/\r\n/g, '\n').trimEnd().split('\n')
+  const lines = (a.algoYaml ?? '').replace(/\r\n/g, '\n').trimEnd().split('\n').filter((l, _i, arr) => !(arr.length === 1 && l === ''))
 
   const setScalar = (key: string, val: string, afterKeys: string[]) => {
     const idx = lines.findIndex((l) => new RegExp(`^${key}:`).test(l))
@@ -179,21 +221,25 @@ function syncAlgoYaml(a: Pick<Algorithm, 'algoYaml' | 'task' | 'business' | 'fra
 // 用 reactive 包一层，使 mock “写操作” 能实时反映到页面上
 const db = reactive(SOURCES)
 
-// ---------- 真实后端同步（猫狗、图像去雾数据集/算法/评测与随机基线完全走 FastAPI + PyTorch） ----------
+// ---------- 真实后端同步（猫狗、图像去雾、时序功率预测数据集/算法/评测与随机基线完全走 FastAPI + PyTorch） ----------
 const REAL_ALGO_ID = 'Admin/cat-dog-classifier'
 const REAL_DEHAZE_IDS = new Set(['Admin/dehaze-dcp', 'Admin/dehaze-aodnet', 'Admin/dehaze-ffanet', 'Admin/dehaze-deanet'])
+const REAL_POWER_ALGO_ID = 'Admin/power-dlinear'
 const REAL_RANDOM_ID = 'Admin/random'
-const REAL_ALGO_IDS = new Set([REAL_ALGO_ID, ...REAL_DEHAZE_IDS, REAL_RANDOM_ID])
+const REAL_ALGO_IDS = new Set([REAL_ALGO_ID, ...REAL_DEHAZE_IDS, REAL_POWER_ALGO_ID, REAL_RANDOM_ID])
 const LEGACY_REAL_ALGO_IDS = new Set(['Admin/dehaze'])
 const REAL_DS_ID = 'Admin/cat-dog-dataset'
 const REAL_DEHAZE_DS_ID = 'Admin/dehaze-dataset'
 const REAL_OCR_DS_ID = 'Admin/sroie-ocr-dataset'
-export const REAL_DS_IDS = new Set([REAL_DS_ID, REAL_DEHAZE_DS_ID, REAL_OCR_DS_ID])
+const REAL_POWER_DS_ID = 'Admin/wind-solar-power-dataset'
+export const REAL_DS_IDS = new Set([REAL_DS_ID, REAL_DEHAZE_DS_ID, REAL_OCR_DS_ID, REAL_POWER_DS_ID])
 const REAL_BENCH_ID = 'cat-dog-cls-bench'
 const REAL_DEHAZE_BENCH_ID = 'dehaze-bench'
-const REAL_BENCH_IDS = new Set([REAL_BENCH_ID, REAL_DEHAZE_BENCH_ID])
+const REAL_POWER_BENCH_ID = 'power-forecast-bench'
+const REAL_BENCH_IDS = new Set([REAL_BENCH_ID, REAL_DEHAZE_BENCH_ID, REAL_POWER_BENCH_ID])
 
 let realSynced = false
+let realBackendAvailable = false
 let realSyncPromise: Promise<void> | null = null
 let realWarmContainers: QueueStatus['warmContainers'] = []
 
@@ -269,6 +315,15 @@ function applyRealBootstrap(payload: {
   const activeEvals = payload.evals.filter((e) => !db.deletedRealIds.includes(e.algorithmId) && !db.deletedRealIds.includes(e.benchmarkId))
   db.evals.unshift(...activeEvals)
   pruneUnusedTags()
+  // 真实后端算法同步后，同步补齐 14 区域全量授权（一次性迁移）
+  try {
+    if (!localStorage.getItem(DISPATCH_ALL_REAL_KEY)) {
+      ensureAllRegionsDispatched(db.algorithms, db.dispatches, db.trialRequests)
+      localStorage.setItem(DISPATCH_ALL_REAL_KEY, '1')
+    }
+  } catch {
+    /* ignore */
+  }
   if (payload.warmContainers) realWarmContainers = payload.warmContainers
 }
 
@@ -278,12 +333,18 @@ async function syncRealBackend(force = false): Promise<void> {
   realSyncPromise = (async () => {
     try {
       const resp = await fetch('/real-api/bootstrap')
-      if (!resp.ok) return
+      if (!resp.ok) throw new Error('real backend unavailable')
       const payload = await resp.json()
       applyRealBootstrap(payload)
+      realBackendAvailable = true
       realSynced = true
     } catch {
-      /* 后端未启动时降级，不影响其余模块 */
+      /* 后端未启动或纯静态部署时，回退到内置的后端数据快照 */
+      realBackendAvailable = false
+      if (!realSynced) {
+        applyRealBootstrap(realBootstrapSnapshot as unknown as Parameters<typeof applyRealBootstrap>[0])
+        realSynced = true
+      }
     } finally {
       realSyncPromise = null
     }
@@ -332,6 +393,8 @@ watch(
 export function resetPrototypeData() {
   try {
     localStorage.removeItem(STORE_KEY)
+    localStorage.removeItem(DISPATCH_ALL_KEY)
+    localStorage.removeItem(DISPATCH_ALL_REAL_KEY)
   } catch {
     /* ignore */
   }
@@ -777,15 +840,17 @@ export async function listEvals(f: { algorithmId?: string; benchmarkId?: string;
 }
 
 export async function getEval(id: string): Promise<EvalRun> {
-  if (id.startsWith('ev-real-') || id.startsWith('ev-dehaze-') || id.startsWith('ev-custom-')) {
-    await syncRealBackend()
-    const resp = await fetch(`/real-api/evals/${encodeURIComponent(id)}`)
-    if (resp.ok) {
-      const live = (await resp.json()) as EvalRun
-      const idx = db.evals.findIndex((x) => x.id === id)
-      if (idx >= 0) db.evals[idx] = live
-      else db.evals.unshift(live)
-      return clone(live)
+  if (id.startsWith('ev-real-') || id.startsWith('ev-dehaze-') || id.startsWith('ev-custom-') || id.startsWith('ev-power-')) {
+    await syncRealBackend(!realBackendAvailable)
+    if (realBackendAvailable) {
+      const resp = await fetch(`/real-api/evals/${encodeURIComponent(id)}`)
+      if (resp.ok) {
+        const live = (await resp.json()) as EvalRun
+        const idx = db.evals.findIndex((x) => x.id === id)
+        if (idx >= 0) db.evals[idx] = live
+        else db.evals.unshift(live)
+        return clone(live)
+      }
     }
   }
   await syncRealBackend()
@@ -800,7 +865,7 @@ export async function getEval(id: string): Promise<EvalRun> {
 // POST /api/evals
 export async function createEval(input: { algorithmId: string; algoVersion: string; benchmarkId: string; params: EvalRun['params'] }): Promise<EvalRun> {
   const { user, can, canSeeAlgo } = useSession()
-  await syncRealBackend()
+  await syncRealBackend(!realBackendAvailable)
   const a = db.algorithms.find((x) => x.id === input.algorithmId)!
   if (!can.value.runEval || !canSeeAlgo(a)) throw new ApiError(403, '只能评测自己的算法')
   const v = a.versions.find((x) => x.version === input.algoVersion)!
@@ -809,7 +874,7 @@ export async function createEval(input: { algorithmId: string; algoVersion: stri
   if (input.algorithmId !== REAL_RANDOM_ID && a.task !== b.task) throw new ApiError(400, '算法任务类型与 Benchmark 不匹配')
 
   // 所有真实后端算法（内置或自助上传）× 所有真实后端评测基准：统一走真实后端评测引擎
-  if (REAL_ALGO_IDS.has(input.algorithmId) && REAL_BENCH_IDS.has(input.benchmarkId)) {
+  if (realBackendAvailable && REAL_ALGO_IDS.has(input.algorithmId) && REAL_BENCH_IDS.has(input.benchmarkId)) {
     const resp = await fetch('/real-api/evals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -859,24 +924,64 @@ export async function createEval(input: { algorithmId: string; algoVersion: stri
     return clone(run)
   }
 
-  await delay(500)
+  await delay(300)
   const id = `ev-${1100 + db.evals.length}`
+  const now = new Date().toISOString()
   const run: EvalRun = {
     id,
     ...input,
     status: 'queued',
-    progress: 0,
+    progress: 10,
     submittedBy: user.value.username,
-    submittedAt: new Date().toISOString(),
+    submittedAt: now,
     metrics: {},
-    imageDigest: v.imageDigest!,
+    imageDigest: v.imageDigest ?? '',
     weightsHash: v.weightsHash ?? '',
     evaluatorVersion: b.evaluatorVersion,
     hardware: 'NVIDIA RTX 4060 Laptop (8GB) · i9-13900H · CUDA 12.4',
     isLatestValid: false,
-    logs: [`[scheduler] 任务入队，声明显存 ${v.gpuMem} GB`, '[scheduler] 前方 2 个任务，预计等待 6 分钟'],
+    logs: [`[scheduler] 任务入队，声明显存 ${v.gpuMem ?? 0} GB`, '[scheduler] 正在分配推理容器并挂载测试集…'],
   }
   db.evals.unshift(run)
+
+  // 离线模拟模式下自动推进任务进度，避免永久停留在「排队中」
+  setTimeout(() => {
+    const target = db.evals.find((x) => x.id === id)
+    if (!target || target.status !== 'queued') return
+    target.status = 'running'
+    target.startedAt = new Date().toISOString()
+    target.progress = 55
+    target.logs.push(`[runner] 加载 ${a.id}@${v.version}，开始在 ${b.datasetId}@${b.datasetVersion} 测试集上推理…`)
+  }, 600)
+
+  setTimeout(() => {
+    const target = db.evals.find((x) => x.id === id)
+    if (!target || target.status === 'canceled') return
+    const seed = hashStr(`${a.id}:${v.version}:${b.id}:${db.evals.length}`)
+    const r = rng(seed)
+    const metrics: Record<string, number> = {}
+    for (const m of b.metrics) {
+      if (m.key === 'accuracy_rate') metrics[m.key] = +(74 + r() * 6).toFixed(2)
+      else if (m.key === 'rmse') metrics[m.key] = +(20 + r() * 6).toFixed(2)
+      else if (m.key === 'mae') metrics[m.key] = +(13 + r() * 4).toFixed(2)
+      else metrics[m.key] = m.unit === '%' ? +(78 + r() * 16).toFixed(2) : +(22 + r() * 8).toFixed(2)
+    }
+    for (const other of db.evals) {
+      if (other.id !== id && other.algorithmId === input.algorithmId && other.algoVersion === input.algoVersion && other.benchmarkId === b.id) {
+        other.isLatestValid = false
+      }
+    }
+    target.status = 'succeeded'
+    target.progress = 100
+    target.finishedAt = new Date().toISOString()
+    target.metrics = metrics
+    target.durationSec = 1.4
+    target.peakGpuMemGB = Math.max(0.1, v.gpuMem ?? 0.1)
+    target.latencyMs = 1.5
+    target.isLatestValid = true
+    target.logs.push(`[done] 评测完成：${JSON.stringify(metrics)}`)
+  }, 1500)
+
   return clone(run)
 }
 
@@ -908,7 +1013,7 @@ const PALETTE = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899
 
 export async function infer(algorithmId: string, version: string, input: { dataUrl?: string; file?: File; fileName: string; size: number; task?: TaskType }): Promise<InferenceResult> {
   // Admin/random：走后端全任务随机推理（忽略输入，每次输出永远随机）
-  if (algorithmId === REAL_RANDOM_ID) {
+  if (realBackendAvailable && algorithmId === REAL_RANDOM_ID) {
     const fd = new FormData()
     fd.append('task', input.task ?? 'image-classification')
     const resp = await fetch(`/real-api/algorithms/${REAL_RANDOM_ID}/infer`, { method: 'POST', body: fd })
@@ -916,7 +1021,7 @@ export async function infer(algorithmId: string, version: string, input: { dataU
     return await resp.json()
   }
   // 所有真实后端算法（内置或自助上传）：统一走真实 PyTorch/NumPy 后端推理
-  if (REAL_ALGO_IDS.has(algorithmId)) {
+  if (realBackendAvailable && REAL_ALGO_IDS.has(algorithmId)) {
     const fd = new FormData()
     fd.append('version', version)
     if (input.file) {

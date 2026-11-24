@@ -1,0 +1,5 @@
+{
+  "site": "algodemo",
+  "build": "build",
+  "outdir": "dist"
+}

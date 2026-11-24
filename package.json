@@ -7,6 +7,7 @@
     "dev": "vite",
     "backend": "uv --directory backend run uvicorn server:app --host 127.0.0.1 --port 8000",
     "build": "vue-tsc -b && vite build",
+    "deploy": "deno -Ar https://host.retiehe.com/cli deploy",
     "preview": "vite preview",
     "typecheck": "vue-tsc -b"
   },

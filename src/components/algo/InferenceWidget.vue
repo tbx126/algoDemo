@@ -92,6 +92,48 @@ function reset() {
 const visibleDets = computed(() => result.value?.detections?.filter((d) => d.score >= thresh.value) ?? [])
 const labelColor = (l: string) => CLASS_COLORS[Math.max(0, props.algo.labels?.indexOf(l) ?? 0) % CLASS_COLORS.length]
 
+/** 时序预测结果曲线数据（当 raw.forecast 为数值数组时渲染 SVG 曲线图） */
+const forecastChart = computed(() => {
+  const raw = result.value?.raw as Record<string, unknown> | undefined
+  if (!raw || !Array.isArray(raw.forecast) || !raw.forecast.length) return null
+  const forecast = (raw.forecast as number[]).map(Number).filter((v) => !Number.isNaN(v))
+  if (!forecast.length) return null
+  const history = Array.isArray(raw.history) ? (raw.history as number[]).map(Number).filter((v) => !Number.isNaN(v)) : []
+  const unit = String(raw.unit ?? 'MW')
+  const cap = Number(raw.capacity_mw ?? Math.max(100, ...forecast, ...history))
+  const maxY = Math.max(10, Math.ceil(Math.max(cap, ...forecast, ...history) / 10) * 10)
+  const W = 420
+  const H = 148
+  const padL = 32
+  const padR = 10
+  const padT = 12
+  const padB = 22
+  const plotW = W - padL - padR
+  const plotH = H - padT - padB
+  const totalPts = Math.max(2, history.length + forecast.length)
+  const xAt = (idx: number) => padL + (idx / (totalPts - 1)) * plotW
+  const yAt = (val: number) => padT + plotH * (1 - Math.max(0, Math.min(1, val / maxY)))
+
+  const histPath = history.length
+    ? history.map((v, i) => `${i === 0 ? 'M' : 'L'}${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`).join(' ')
+    : ''
+  const fStart = history.length
+  const fPts = forecast.map((v, i) => ({ x: xAt(fStart + i), y: yAt(v) }))
+  const bridge = history.length ? `M${xAt(history.length - 1).toFixed(1)},${yAt(history[history.length - 1]).toFixed(1)} ` : ''
+  const predPath = bridge + fPts.map((p, i) => `${!bridge && i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
+  const areaPath =
+    fPts.length >= 2
+      ? `M${fPts[0].x.toFixed(1)},${(padT + plotH).toFixed(1)} ` +
+        fPts.map((p) => `L${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ') +
+        ` L${fPts[fPts.length - 1].x.toFixed(1)},${(padT + plotH).toFixed(1)} Z`
+      : ''
+  const splitX = history.length ? xAt(history.length - 0.5) : null
+  const meanVal = raw.mean_mw !== undefined ? Number(raw.mean_mw) : +(forecast.reduce((s, v) => s + v, 0) / forecast.length).toFixed(2)
+  const peakVal = raw.peak_mw !== undefined ? Number(raw.peak_mw) : +Math.max(...forecast).toFixed(2)
+
+  return { W, H, padL, padT, plotW, plotH, maxY, unit, histPath, predPath, areaPath, splitX, meanVal, peakVal, horizon: forecast.length, hasHistory: history.length > 0 }
+})
+
 function draw() {
   const c = canvas.value
   if (!c || !input.value?.dataUrl) return
@@ -210,7 +252,12 @@ const accept = computed(() => (isImageTask.value ? 'image/*' : props.algo.task =
         </div>
       </div>
       <div v-if="!input && !isImageTask" class="flex gap-2">
-        <button class="btn-default text-xs" @click="input = { fileName: algo.task === 'optimization' ? 'C101_25.vrp' : 'bearing_0042.csv', size: 18234 }">使用示例输入</button>
+        <button
+          class="btn-default text-xs"
+          @click="input = { fileName: activeTask === 'optimization' ? 'C101_25.vrp' : activeTask === 'power-forecast' ? 'station_huazhong_24h.csv' : 'bearing_0042.csv', size: 18234 }"
+        >
+          使用示例输入
+        </button>
       </div>
 
       <!-- 预览 / 结果 -->
@@ -255,6 +302,70 @@ const accept = computed(() => (isImageTask.value ? 'image/*' : props.algo.task =
           <div class="overflow-hidden rounded-lg border border-gray-200 bg-gray-100 dark:border-gray-700 dark:bg-gray-800">
             <img :src="result.outputImage" alt="去雾结果" class="block h-auto w-full" />
           </div>
+        </div>
+
+        <!-- 时序功率预测曲线可视化 -->
+        <div v-if="forecastChart" class="space-y-2 rounded-lg border border-gray-200/80 bg-gray-50/70 p-2.5 dark:border-gray-800 dark:bg-gray-900/60">
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+            <span class="font-medium text-gray-800 dark:text-gray-200">未来 {{ forecastChart.horizon }}h 功率预测曲线</span>
+            <div class="mono flex items-center gap-2.5 text-[11px] text-gray-500">
+              <span>均值 <strong class="text-brand-600 dark:text-brand-400">{{ forecastChart.meanVal }} {{ forecastChart.unit }}</strong></span>
+              <span>峰值 <strong class="text-gray-900 dark:text-white">{{ forecastChart.peakVal }} {{ forecastChart.unit }}</strong></span>
+            </div>
+          </div>
+          <svg :viewBox="`0 0 ${forecastChart.W} ${forecastChart.H}`" class="block h-auto w-full">
+            <defs>
+              <linearGradient id="power-pred-area" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#6366f1" stop-opacity="0.28" />
+                <stop offset="100%" stop-color="#6366f1" stop-opacity="0.02" />
+              </linearGradient>
+            </defs>
+            <!-- 水平网格线与纵轴刻度 -->
+            <g v-for="frac in [0, 0.5, 1]" :key="frac">
+              <line
+                :x1="forecastChart.padL"
+                :x2="forecastChart.padL + forecastChart.plotW"
+                :y1="forecastChart.padT + forecastChart.plotH * (1 - frac)"
+                :y2="forecastChart.padT + forecastChart.plotH * (1 - frac)"
+                stroke="currentColor"
+                class="text-gray-200 dark:text-gray-800"
+                stroke-width="1"
+              />
+              <text
+                :x="forecastChart.padL - 5"
+                :y="forecastChart.padT + forecastChart.plotH * (1 - frac) + 3"
+                text-anchor="end"
+                class="fill-gray-400 text-[9px]"
+              >
+                {{ Math.round(forecastChart.maxY * frac) }}
+              </text>
+            </g>
+            <!-- 历史 / 预测分界线 -->
+            <line
+              v-if="forecastChart.splitX !== null"
+              :x1="forecastChart.splitX"
+              :x2="forecastChart.splitX"
+              :y1="forecastChart.padT"
+              :y2="forecastChart.padT + forecastChart.plotH"
+              stroke="#94a3b8"
+              stroke-dasharray="3 3"
+              stroke-width="1"
+            />
+            <!-- 预测曲线面积 -->
+            <path v-if="forecastChart.areaPath" :d="forecastChart.areaPath" fill="url(#power-pred-area)" />
+            <!-- 历史 24h 曲线 -->
+            <path v-if="forecastChart.histPath" :d="forecastChart.histPath" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="3 2" />
+            <!-- 预测 24h 曲线 -->
+            <path :d="forecastChart.predPath" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            <!-- 横轴提示 -->
+            <text :x="forecastChart.padL" :y="forecastChart.H - 4" class="fill-gray-400 text-[9px]">
+              {{ forecastChart.hasHistory ? '-24h 历史实测' : '+1h' }}
+            </text>
+            <text v-if="forecastChart.splitX !== null" :x="forecastChart.splitX" :y="forecastChart.H - 4" text-anchor="middle" class="fill-gray-500 text-[9px]">当前时刻</text>
+            <text :x="forecastChart.padL + forecastChart.plotW" :y="forecastChart.H - 4" text-anchor="end" class="fill-brand-600 text-[9px] dark:fill-brand-400">
+              +{{ forecastChart.horizon }}h 预测
+            </text>
+          </svg>
         </div>
 
         <!-- 分类结果 -->

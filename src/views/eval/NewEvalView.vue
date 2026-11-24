@@ -55,7 +55,10 @@ const checks = computed(() => {
     const ok = isUniversal(algo.value.id) || algo.value.task === bench.value.task
     out.push({ ok, text: isUniversal(algo.value.id) ? '通用随机基线，兼容任意任务类型的评测基准' : ok ? '任务类型匹配' : '任务类型不匹配' })
   }
-  if (ver.value && q.value) out.push({ ok: ver.value.gpuMem <= q.value.gpuMemTotal, text: `声明显存 ${ver.value.gpuMem} GB ≤ GPU 总显存 ${q.value.gpuMemTotal} GB` })
+  if (ver.value && q.value) {
+    const reqMem = ver.value.gpuMem ?? 0
+    out.push({ ok: reqMem <= q.value.gpuMemTotal, text: `声明显存 ${reqMem} GB ≤ GPU 总显存 ${q.value.gpuMemTotal} GB` })
+  }
   return out
 })
 const ready = computed(() => form.algo && form.version && form.bench && checks.value.every((c) => c.ok))

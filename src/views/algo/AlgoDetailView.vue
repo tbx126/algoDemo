@@ -129,7 +129,7 @@ const scores = computed(() => {
   return out
 })
 const fileIcon = (k: string) => (k === 'weights' ? Weight : k === 'config' ? FileCog : k === 'doc' ? FileText : FileCode)
-const totalSize = computed(() => algo.value?.files.reduce((s, f) => s + f.size, 0) ?? 0)
+const totalSize = computed(() => (algo.value?.files ?? []).reduce((s, f) => s + (f.size ?? 0), 0))
 </script>
 
 <template>
@@ -367,7 +367,7 @@ const totalSize = computed(() => algo.value?.files.reduce((s, f) => s + f.size, 
                     <td class="max-w-56 truncate text-gray-600 dark:text-gray-400" :title="v.changelog">{{ v.changelog }}</td>
                     <td><HashText v-if="v.imageDigest" :value="v.imageDigest" /><span v-else class="text-gray-400">—</span></td>
                     <td><HashText v-if="v.weightsHash" :value="v.weightsHash" /></td>
-                    <td class="whitespace-nowrap">{{ v.gpuMem }} GB</td>
+                    <td class="whitespace-nowrap">{{ v.gpuMem ? `${v.gpuMem} GB` : 'CPU (0 GB)' }}</td>
                     <td class="whitespace-nowrap text-gray-500">{{ v.createdBy }} · {{ timeAgo(v.createdAt) }}</td>
                     <td class="whitespace-nowrap text-right">
                       <button class="btn-ghost px-2 py-1 text-xs" @click="logOf = v"><ScrollText class="size-3.5" />{{ v.status === 'pending_review' ? '审核信息' : '构建日志' }}</button>
@@ -382,11 +382,11 @@ const totalSize = computed(() => algo.value?.files.reduce((s, f) => s + f.size, 
           <section class="grid gap-6 lg:grid-cols-2">
             <div>
               <div class="mb-3 flex items-center justify-between">
-                <h2 class="section-title">文件 <span class="text-sm font-normal text-gray-400">· {{ algo.versions[0].version }}</span></h2>
+                <h2 class="section-title">文件 <span class="text-sm font-normal text-gray-400">· {{ algo.versions[0]?.version ?? 'v1.0.0' }}</span></h2>
                 <span class="flex items-center gap-1 text-xs text-gray-500"><HardDrive class="size-3.5" />{{ fmtBytes(totalSize) }}</span>
               </div>
               <div class="card divide-y divide-gray-100 dark:divide-gray-800">
-                <div v-for="f in algo.files" :key="f.path" class="flex items-center gap-2 px-3 py-2 text-sm">
+                <div v-for="f in algo.files ?? []" :key="f.path" class="flex items-center gap-2 px-3 py-2 text-sm">
                   <component :is="fileIcon(f.kind)" class="size-4 text-gray-400" />
                   <span class="mono">{{ f.path }}</span>
                   <span v-if="f.kind === 'weights'" class="chip text-[10px]">存储层 · 不入镜像</span>

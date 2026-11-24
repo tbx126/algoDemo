@@ -58,7 +58,14 @@ const canCancel = computed(() => run.value && (run.value.status === 'queued' || 
 const perClass = computed(() => {
   if (!run.value || run.value.status !== 'succeeded') return []
   if (run.value.perClass?.length) {
-    return [...run.value.perClass].map((c) => ({ label: c.label, v: c.value })).sort((a, b) => a.v - b.v)
+    return [...run.value.perClass]
+      .map((c) => {
+        const raw = c as unknown as Record<string, unknown>
+        const label = String(raw.label ?? raw.name ?? '类别')
+        const v = Number(raw.value ?? raw.accuracy_rate ?? 0)
+        return { label, v: Number.isFinite(v) ? v : 0 }
+      })
+      .sort((a, b) => a.v - b.v)
   }
   if (!ds.value || !primary.value) return []
   const base = run.value.metrics[primary.value.key]
@@ -156,7 +163,7 @@ async function rerun() {
           </div>
 
           <!-- 错误样例 -->
-          <div v-if="can.testAccess && ds && run.status === 'succeeded' && !['signal-processing', 'optimization'].includes(ds.task)" class="card p-5">
+          <div v-if="can.testAccess && ds && run.status === 'succeeded' && !['signal-processing', 'optimization', 'power-forecast'].includes(ds.task)" class="card p-5">
             <h2 class="section-title mb-1">错误样例</h2>
             <p class="mb-4 text-xs text-gray-500">
               来自测试集，仅管理员可见<template v-if="run.errorSamples">（展示 {{ run.errorSamples.length }} 个真实误判样本）</template>
@@ -206,8 +213,8 @@ async function rerun() {
           <div class="card p-5">
             <h2 class="section-title mb-3">复现信息</h2>
             <dl class="space-y-2.5 text-sm">
-              <div><dt class="text-xs text-gray-500">镜像 digest</dt><dd><HashText :value="run.imageDigest" :short="30" /></dd></div>
-              <div><dt class="text-xs text-gray-500">权重哈希</dt><dd><HashText :value="run.weightsHash" :short="30" /></dd></div>
+              <div><dt class="text-xs text-gray-500">镜像 digest</dt><dd><HashText :value="run.imageDigest ?? ''" :short="30" /></dd></div>
+              <div><dt class="text-xs text-gray-500">权重哈希</dt><dd><HashText :value="run.weightsHash ?? ''" :short="30" /></dd></div>
               <div><dt class="text-xs text-gray-500">评测基准</dt><dd class="mono">{{ run.benchmarkId }}</dd></div>
               <div v-if="bench"><dt class="text-xs text-gray-500">测试集版本</dt><dd class="mono">{{ bench.datasetId }} · test@{{ bench.datasetVersion }}</dd></div>
               <div><dt class="text-xs text-gray-500">评测器版本</dt><dd class="mono">{{ bench?.evaluator }}@{{ run.evaluatorVersion }}</dd></div>
