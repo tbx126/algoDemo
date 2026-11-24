@@ -358,6 +358,7 @@ export interface EvalRun {
   latencyMs?: number // 单图平均推理耗时
   isLatestValid: boolean // 同一 算法版本×Benchmark 只有最新有效结果上榜
   perClass?: { label: string; value: number }[]
+  visual0x6E?: Record<string, unknown>
   errorSamples?: { fileName: string; url: string; groundTruth: string; predicted: string; confidence: number }[]
   logs: string[]
   error?: string

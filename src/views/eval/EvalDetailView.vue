@@ -14,6 +14,7 @@ import StatusBadge from '@/components/ui/StatusBadge.vue'
 import HashText from '@/components/ui/HashText.vue'
 import OrgAvatar from '@/components/ui/OrgAvatar.vue'
 import SynthImage from '@/components/ui/SynthImage.vue'
+import Fault0x6ECharts, { type Fault0x6EVisual } from '@/components/eval/Fault0x6ECharts.vue'
 import { useRouter } from 'vue-router'
 
 const route = useRoute()
@@ -147,6 +148,11 @@ async function rerun() {
 
       <div class="mt-6 grid gap-6 lg:grid-cols-[1fr_380px]">
         <div class="min-w-0 space-y-6">
+          <!-- 0x6E 服务器故障时序检测专属多折线图可视化 -->
+          <div v-if="run.status === 'succeeded' && run.visual0x6E" class="card p-5">
+            <Fault0x6ECharts :visual="run.visual0x6E as unknown as Fault0x6EVisual" />
+          </div>
+
           <!-- 每类指标 -->
           <div v-if="perClass.length" class="card p-5">
             <h2 class="section-title mb-1">各类别 {{ primary?.label }}</h2>

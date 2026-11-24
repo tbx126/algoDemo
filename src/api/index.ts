@@ -48,7 +48,7 @@ import { REGIONS } from '@/utils/meta'
 const STORE_KEY = 'algohub-db-v6'
 const TAG_CLEAN_KEY = 'algohub-tags-cleaned-v1'
 const DISPATCH_ALL_KEY = 'algohub-dispatch-all-v1'
-const DISPATCH_ALL_REAL_KEY = 'algohub-dispatch-all-real-v2'
+const DISPATCH_ALL_REAL_KEY = 'algohub-dispatch-all-real-v3'
 const DEFAULT_TAGS = ['真实部署', '基线算法', '高精度', '实时推理', '边缘端', '新能源场站', '可见光巡检', '表计读数', '状态识别']
 const LEGACY_NOISY_TAGS = new Set([
   '猫狗识别', '图像分类', '安防周界', '图像去雾', '传统物理先验', '暗通道', 'CPU',
@@ -225,18 +225,21 @@ const db = reactive(SOURCES)
 const REAL_ALGO_ID = 'Admin/cat-dog-classifier'
 const REAL_DEHAZE_IDS = new Set(['Admin/dehaze-dcp', 'Admin/dehaze-aodnet', 'Admin/dehaze-ffanet', 'Admin/dehaze-deanet'])
 const REAL_POWER_ALGO_ID = 'Admin/power-dlinear'
+const REAL_0X6E_ALGO_ID = 'Admin/0x6E'
 const REAL_RANDOM_ID = 'Admin/random'
-const REAL_ALGO_IDS = new Set([REAL_ALGO_ID, ...REAL_DEHAZE_IDS, REAL_POWER_ALGO_ID, REAL_RANDOM_ID])
+const REAL_ALGO_IDS = new Set([REAL_ALGO_ID, ...REAL_DEHAZE_IDS, REAL_POWER_ALGO_ID, REAL_0X6E_ALGO_ID, REAL_RANDOM_ID])
 const LEGACY_REAL_ALGO_IDS = new Set(['Admin/dehaze'])
 const REAL_DS_ID = 'Admin/cat-dog-dataset'
 const REAL_DEHAZE_DS_ID = 'Admin/dehaze-dataset'
 const REAL_OCR_DS_ID = 'Admin/sroie-ocr-dataset'
 const REAL_POWER_DS_ID = 'Admin/wind-solar-power-dataset'
-export const REAL_DS_IDS = new Set([REAL_DS_ID, REAL_DEHAZE_DS_ID, REAL_OCR_DS_ID, REAL_POWER_DS_ID])
+const REAL_0X6E_DS_ID = 'Admin/0x6E-server-telemetry'
+export const REAL_DS_IDS = new Set([REAL_DS_ID, REAL_DEHAZE_DS_ID, REAL_OCR_DS_ID, REAL_POWER_DS_ID, REAL_0X6E_DS_ID])
 const REAL_BENCH_ID = 'cat-dog-cls-bench'
 const REAL_DEHAZE_BENCH_ID = 'dehaze-bench'
 const REAL_POWER_BENCH_ID = 'power-forecast-bench'
-const REAL_BENCH_IDS = new Set([REAL_BENCH_ID, REAL_DEHAZE_BENCH_ID, REAL_POWER_BENCH_ID])
+const REAL_0X6E_BENCH_ID = '0x6E-server-fault-bench'
+const REAL_BENCH_IDS = new Set([REAL_BENCH_ID, REAL_DEHAZE_BENCH_ID, REAL_POWER_BENCH_ID, REAL_0X6E_BENCH_ID])
 
 let realSynced = false
 let realBackendAvailable = false
@@ -840,7 +843,7 @@ export async function listEvals(f: { algorithmId?: string; benchmarkId?: string;
 }
 
 export async function getEval(id: string): Promise<EvalRun> {
-  if (id.startsWith('ev-real-') || id.startsWith('ev-dehaze-') || id.startsWith('ev-custom-') || id.startsWith('ev-power-')) {
+  if (id.startsWith('ev-real-') || id.startsWith('ev-dehaze-') || id.startsWith('ev-custom-') || id.startsWith('ev-power-') || id.startsWith('ev-0x6e-')) {
     await syncRealBackend(!realBackendAvailable)
     if (realBackendAvailable) {
       const resp = await fetch(`/real-api/evals/${encodeURIComponent(id)}`)

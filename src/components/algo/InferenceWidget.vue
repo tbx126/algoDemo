@@ -7,6 +7,7 @@ import { useSession } from '@/stores/session'
 import { TASKS } from '@/utils/meta'
 import { CLASS_COLORS, sampleImageDataUrl } from '@/utils/synth'
 import { hashStr } from '@/utils/format'
+import Fault0x6ECharts, { type Fault0x6EVisual } from '@/components/eval/Fault0x6ECharts.vue'
 
 const props = defineProps<{ algo: Algorithm; lockedReason?: string; pendingTrial?: boolean }>()
 const emit = defineEmits<{ applyTrial: [] }>()
@@ -91,6 +92,25 @@ function reset() {
 
 const visibleDets = computed(() => result.value?.detections?.filter((d) => d.score >= thresh.value) ?? [])
 const labelColor = (l: string) => CLASS_COLORS[Math.max(0, props.algo.labels?.indexOf(l) ?? 0) % CLASS_COLORS.length]
+
+/** 0x6E 服务器故障时序检测结果（含逐分钟预测概率、GT 与多维硬件指标折线图） */
+const fault0x6EVisual = computed<Fault0x6EVisual | null>(() => {
+  const raw = result.value?.raw as Record<string, unknown> | undefined
+  if (!raw || raw.tag !== '0x6E' || !Array.isArray(raw.predProb) || !raw.telemetry) return null
+  return {
+    tag: '0x6E',
+    windowLen: Number(raw.window_len ?? 60),
+    cases: [
+      {
+        id: String(raw.source_file ?? '0x6E-sample.csv'),
+        faultType: String(raw.status ?? '检测结果'),
+        predProb: raw.predProb as number[],
+        gtFault: (raw.gtFault as number[] | null | undefined) ?? null,
+        telemetry: raw.telemetry as Fault0x6EVisual['cases'][0]['telemetry'],
+      },
+    ],
+  }
+})
 
 /** 时序预测结果曲线数据（当 raw.forecast 为数值数组时渲染 SVG 曲线图） */
 const forecastChart = computed(() => {
@@ -254,7 +274,7 @@ const accept = computed(() => (isImageTask.value ? 'image/*' : props.algo.task =
       <div v-if="!input && !isImageTask" class="flex gap-2">
         <button
           class="btn-default text-xs"
-          @click="input = { fileName: activeTask === 'optimization' ? 'C101_25.vrp' : activeTask === 'power-forecast' ? 'station_huazhong_24h.csv' : 'bearing_0042.csv', size: 18234 }"
+          @click="input = { fileName: algo.id === 'Admin/0x6E' ? 'server_0x6e_sample.csv' : activeTask === 'optimization' ? 'C101_25.vrp' : activeTask === 'power-forecast' ? 'station_huazhong_24h.csv' : 'bearing_0042.csv', size: 18234 }"
         >
           使用示例输入
         </button>
@@ -302,6 +322,25 @@ const accept = computed(() => (isImageTask.value ? 'image/*' : props.algo.task =
           <div class="overflow-hidden rounded-lg border border-gray-200 bg-gray-100 dark:border-gray-700 dark:bg-gray-800">
             <img :src="result.outputImage" alt="去雾结果" class="block h-auto w-full" />
           </div>
+        </div>
+
+        <!-- 0x6E 服务器故障检测诊断与多折线图可视化 -->
+        <div v-if="fault0x6EVisual" class="space-y-2.5">
+          <div
+            class="rounded-lg border px-3 py-2 text-xs"
+            :class="
+              (result.raw as Record<string, unknown>).status === '正常'
+                ? 'border-emerald-200 bg-emerald-50/70 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
+                : 'border-rose-200 bg-rose-50/70 text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300'
+            "
+          >
+            <div class="flex flex-wrap items-center justify-between gap-2 font-semibold">
+              <span>0x6E 诊断状态：{{ (result.raw as Record<string, unknown>).status }}</span>
+              <span class="mono text-[11px]">峰值风险 {{ (result.raw as Record<string, unknown>).peak_risk_pct }}% · 告警 {{ (result.raw as Record<string, unknown>).fault_minutes }} 分钟</span>
+            </div>
+            <p class="mt-0.5 text-[11px] opacity-90">{{ (result.raw as Record<string, unknown>).diagnosis }}</p>
+          </div>
+          <Fault0x6ECharts :visual="fault0x6EVisual" compact />
         </div>
 
         <!-- 时序功率预测曲线可视化 -->

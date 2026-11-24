@@ -19,7 +19,6 @@ const nav = [
   { to: '/datasets', label: '数据集', icon: Database },
   { to: '/benchmarks', label: '评测基准', icon: Trophy },
   { to: '/evals', label: '评测任务', icon: FlaskConical },
-  { to: '/regions', label: '区域地图', icon: MapPin },
   { to: '/studio', label: '编排实验', icon: Workflow, beta: true },
 ]
 const isActive = (to: string) => route.path.startsWith(to)

@@ -263,8 +263,8 @@ const totalSize = computed(() => (algo.value?.files ?? []).reduce((s, f) => s + 
 
         <!-- 算法卡片 -->
         <div v-if="tab === 'card'" class="flex flex-col gap-8 lg:flex-row">
-          <DocOutline :items="toc" />
-          <div class="min-w-0 flex-1">
+          <div class="relative min-w-0 flex-1" :class="{ 'lg:pl-10': toc.length }">
+            <DocOutline :items="toc" />
             <MarkdownView :source="algo.readme" @toc="toc = $event" />
           </div>
           <aside class="order-first w-full shrink-0 space-y-5 lg:order-none lg:w-[400px]">

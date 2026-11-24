@@ -155,8 +155,8 @@ function download(p: SplitName) {
       <div class="container-page pt-6">
         <!-- ========== 卡片 ========== -->
         <div v-if="tab === 'card'" class="flex flex-col gap-8 lg:flex-row">
-          <DocOutline :items="toc" />
-          <div class="min-w-0 flex-1">
+          <div class="relative min-w-0 flex-1" :class="{ 'lg:pl-10': toc.length }">
+            <DocOutline :items="toc" />
             <div class="mb-6 overflow-hidden rounded-xl border border-gray-100 dark:border-gray-800">
               <div class="flex items-center justify-between border-b border-gray-100 px-3 py-2 text-sm dark:border-gray-800">
                 <span class="font-medium">训练集预览</span>
