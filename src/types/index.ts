@@ -9,6 +9,7 @@ export type TaskType =
   | 'keypoint-detection'
   | 'ocr'
   | 'power-forecast'
+  | 'server-fault-0x07'
   | 'signal-processing'
   | 'optimization'
   | 'custom'
@@ -358,6 +359,8 @@ export interface EvalRun {
   latencyMs?: number // 单图平均推理耗时
   isLatestValid: boolean // 同一 算法版本×Benchmark 只有最新有效结果上榜
   perClass?: { label: string; value: number }[]
+  /** [0x07] 服务器故障检测评测的折线图数据 */
+  viz0x07?: import('@/components/fault0x07/types').Fault0x07Viz
   errorSamples?: { fileName: string; url: string; groundTruth: string; predicted: string; confidence: number }[]
   logs: string[]
   error?: string

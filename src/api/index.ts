@@ -226,17 +226,20 @@ const REAL_ALGO_ID = 'Admin/cat-dog-classifier'
 const REAL_DEHAZE_IDS = new Set(['Admin/dehaze-dcp', 'Admin/dehaze-aodnet', 'Admin/dehaze-ffanet', 'Admin/dehaze-deanet'])
 const REAL_POWER_ALGO_ID = 'Admin/power-dlinear'
 const REAL_RANDOM_ID = 'Admin/random'
-const REAL_ALGO_IDS = new Set([REAL_ALGO_ID, ...REAL_DEHAZE_IDS, REAL_POWER_ALGO_ID, REAL_RANDOM_ID])
+const REAL_0X07_ALGO_ID = 'Admin/0x07' // [0x07] 服务器运行故障检测
+const REAL_ALGO_IDS = new Set([REAL_ALGO_ID, ...REAL_DEHAZE_IDS, REAL_POWER_ALGO_ID, REAL_0X07_ALGO_ID, REAL_RANDOM_ID])
 const LEGACY_REAL_ALGO_IDS = new Set(['Admin/dehaze'])
 const REAL_DS_ID = 'Admin/cat-dog-dataset'
 const REAL_DEHAZE_DS_ID = 'Admin/dehaze-dataset'
 const REAL_OCR_DS_ID = 'Admin/sroie-ocr-dataset'
 const REAL_POWER_DS_ID = 'Admin/wind-solar-power-dataset'
-export const REAL_DS_IDS = new Set([REAL_DS_ID, REAL_DEHAZE_DS_ID, REAL_OCR_DS_ID, REAL_POWER_DS_ID])
+const REAL_0X07_DS_ID = 'Admin/0x07-server-telemetry-dataset' // [0x07]
+export const REAL_DS_IDS = new Set([REAL_DS_ID, REAL_DEHAZE_DS_ID, REAL_OCR_DS_ID, REAL_POWER_DS_ID, REAL_0X07_DS_ID])
 const REAL_BENCH_ID = 'cat-dog-cls-bench'
 const REAL_DEHAZE_BENCH_ID = 'dehaze-bench'
 const REAL_POWER_BENCH_ID = 'power-forecast-bench'
-const REAL_BENCH_IDS = new Set([REAL_BENCH_ID, REAL_DEHAZE_BENCH_ID, REAL_POWER_BENCH_ID])
+const REAL_0X07_BENCH_ID = '0x07-server-fault-bench' // [0x07]
+const REAL_BENCH_IDS = new Set([REAL_BENCH_ID, REAL_DEHAZE_BENCH_ID, REAL_POWER_BENCH_ID, REAL_0X07_BENCH_ID])
 
 let realSynced = false
 let realBackendAvailable = false
@@ -840,7 +843,7 @@ export async function listEvals(f: { algorithmId?: string; benchmarkId?: string;
 }
 
 export async function getEval(id: string): Promise<EvalRun> {
-  if (id.startsWith('ev-real-') || id.startsWith('ev-dehaze-') || id.startsWith('ev-custom-') || id.startsWith('ev-power-')) {
+  if (id.startsWith('ev-real-') || id.startsWith('ev-dehaze-') || id.startsWith('ev-custom-') || id.startsWith('ev-power-') || id.startsWith('ev-0x07-')) {
     await syncRealBackend(!realBackendAvailable)
     if (realBackendAvailable) {
       const resp = await fetch(`/real-api/evals/${encodeURIComponent(id)}`)

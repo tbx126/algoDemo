@@ -7,6 +7,7 @@ import { useSession } from '@/stores/session'
 import { TASKS } from '@/utils/meta'
 import { CLASS_COLORS, sampleImageDataUrl } from '@/utils/synth'
 import { hashStr } from '@/utils/format'
+import Infer0x07 from '@/components/fault0x07/Infer0x07.vue'
 
 const props = defineProps<{ algo: Algorithm; lockedReason?: string; pendingTrial?: boolean }>()
 const emit = defineEmits<{ applyTrial: [] }>()
@@ -17,7 +18,7 @@ const version = ref(readyVersions.value[0]?.version ?? '')
 const isRandomAlgo = computed(() => props.algo.id === 'Admin/random')
 const randomTask = ref<TaskType>('image-classification')
 const activeTask = computed<TaskType>(() => (isRandomAlgo.value ? randomTask.value : props.algo.task))
-const isImageTask = computed(() => !['signal-processing', 'power-forecast', 'optimization', 'custom'].includes(activeTask.value))
+const isImageTask = computed(() => !['signal-processing', 'power-forecast', 'server-fault-0x07', 'optimization', 'custom'].includes(activeTask.value))
 
 const samples = ref<string[]>([])
 onMounted(() => {
@@ -216,6 +217,9 @@ const accept = computed(() => (isImageTask.value ? 'image/*' : props.algo.task =
       </span>
     </div>
     <div v-else-if="!readyVersions.length" class="px-4 py-10 text-center text-sm text-gray-500">暂无可用版本（构建或审核未完成），无法推理</div>
+
+    <!-- [0x07] 服务器运行故障检测：专用推理与折线图面板 -->
+    <Infer0x07 v-else-if="algo.task === 'server-fault-0x07'" :algo="algo" :version="version" />
 
     <div v-else class="space-y-3 p-4">
       <div v-if="isRandomAlgo" class="flex items-center gap-2 text-xs">

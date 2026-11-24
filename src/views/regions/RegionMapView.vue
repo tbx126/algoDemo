@@ -176,6 +176,7 @@ const TASK_DOT_CLS: Record<TaskType, string> = {
   'keypoint-detection': 'bg-rose-500/85 dark:bg-rose-400/90',
   ocr: 'bg-violet-500/85 dark:bg-violet-400/90',
   'power-forecast': 'bg-indigo-500/85 dark:bg-indigo-400/90',
+  'server-fault-0x07': 'bg-red-500/85 dark:bg-red-400/90',
   'signal-processing': 'bg-orange-500/85 dark:bg-orange-400/90',
   optimization: 'bg-lime-500/85 dark:bg-lime-400/90',
   custom: 'bg-slate-400/85 dark:bg-slate-400/90',

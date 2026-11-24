@@ -19,6 +19,8 @@ import type { TocItem } from '@/utils/markdown'
 import SynthImage from '@/components/ui/SynthImage.vue'
 import Modal from '@/components/ui/Modal.vue'
 import EditDatasetModal from '@/components/admin/EditDatasetModal.vue'
+import SeriesPreview0x07 from '@/components/fault0x07/SeriesPreview0x07.vue'
+import { DATASET_0X07_ID } from '@/components/fault0x07/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -162,7 +164,11 @@ function download(p: SplitName) {
                 <span class="font-medium">训练集预览</span>
                 <button class="cursor-pointer text-xs text-brand-600 hover:underline" @click="setTab('train')">查看训练集 →</button>
               </div>
-              <div v-if="ds.realPreview?.train?.length" class="grid gap-1.5 p-1.5" :class="ds.task === 'ocr' ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-3 sm:grid-cols-6'">
+              <!-- [0x07] 遥测时序数据集：折线图预览 -->
+              <div v-if="ds.id === DATASET_0X07_ID" class="p-3">
+                <SeriesPreview0x07 part="train" :rows="ds.realPreview?.train ?? []" :max="12" />
+              </div>
+              <div v-else-if="ds.realPreview?.train?.length" class="grid gap-1.5 p-1.5" :class="ds.task === 'ocr' ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-3 sm:grid-cols-6'">
                 <div v-for="item in ds.realPreview.train" :key="item.file_name" class="relative overflow-hidden rounded-md border border-gray-100 bg-gray-100 dark:border-gray-800 dark:bg-gray-900">
                   <template v-if="ds.task === 'ocr'">
                     <div class="flex h-16 items-center justify-center bg-white p-1.5 dark:bg-gray-950">
@@ -280,6 +286,12 @@ function download(p: SplitName) {
               </div>
             </div>
 
+            <!-- [0x07] 遥测时序数据集：series/ 折线图预览 -->
+            <template v-if="ds.id === DATASET_0X07_ID">
+              <h2 class="mt-8 mb-3 text-sm font-semibold">series/ 折线图预览 <span class="font-normal text-gray-500">· 浅红色背景为 Ground Truth 故障段，浅黄色为故障前 10 分钟预警段</span></h2>
+              <SeriesPreview0x07 :part="partName" :rows="realRows" :max="36" />
+            </template>
+            <template v-else>
             <div class="mt-8 mb-3 flex items-center gap-3">
               <h2 class="text-sm font-semibold">images/ 预览</h2>
               <button class="btn-default py-1 text-xs" @click="showAnn = !showAnn"><component :is="showAnn ? Eye : EyeOff" class="size-3.5" />{{ showAnn ? '叠加标注' : '原图' }}</button>
@@ -319,6 +331,7 @@ function download(p: SplitName) {
             <div class="mt-6 text-center">
               <button v-if="count < (isRealDataset ? realRows.length : 72)" class="btn-default" @click="count += 18">加载更多</button>
             </div>
+            </template>
           </template>
         </div>
 
