@@ -11,6 +11,7 @@ export const TASKS: Record<TaskType, { label: string; group: '视觉与识别' |
   'keypoint-detection': { label: '关键点检测', group: '视觉与识别', color: 'text-rose-600 dark:text-rose-400' },
   ocr: { label: 'OCR 文字识别', group: '视觉与识别', color: 'text-violet-600 dark:text-violet-400' },
   'power-forecast': { label: '功率预测', group: '预测与优化', color: 'text-indigo-600 dark:text-indigo-400' },
+  'server-fault-0x07': { label: '服务器故障检测', group: '预测与优化', color: 'text-red-600 dark:text-red-400' },
   'signal-processing': { label: '信号处理', group: '预测与优化', color: 'text-orange-600 dark:text-orange-400' },
   optimization: { label: '优化求解', group: '预测与优化', color: 'text-lime-600 dark:text-lime-400' },
   custom: { label: '自定义任务', group: '其他', color: 'text-slate-600 dark:text-slate-400' },

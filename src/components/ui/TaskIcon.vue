@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { AudioWaveform, Bone, Box, CloudSun, ScanText, Shapes, SquareDashedMousePointer, Tags, Route, Puzzle, Zap } from 'lucide-vue-next'
+import { AudioWaveform, Bone, Box, CloudSun, ScanText, Shapes, SquareDashedMousePointer, Tags, Route, Puzzle, ServerCrash, Zap } from 'lucide-vue-next'
 import type { TaskType } from '@/types'
 
 const props = defineProps<{ task: TaskType }>()
@@ -15,6 +15,7 @@ const icon = computed(
       'keypoint-detection': Bone,
       ocr: ScanText,
       'power-forecast': Zap,
+      'server-fault-0x07': ServerCrash,
       'signal-processing': AudioWaveform,
       optimization: Route,
       custom: Puzzle,

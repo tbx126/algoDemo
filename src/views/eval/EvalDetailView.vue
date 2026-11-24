@@ -15,6 +15,7 @@ import HashText from '@/components/ui/HashText.vue'
 import OrgAvatar from '@/components/ui/OrgAvatar.vue'
 import SynthImage from '@/components/ui/SynthImage.vue'
 import Fault0x6ECharts, { type Fault0x6EVisual } from '@/components/eval/Fault0x6ECharts.vue'
+import EvalViz0x07 from '@/components/fault0x07/EvalViz0x07.vue'
 import { useRouter } from 'vue-router'
 
 const route = useRoute()
@@ -146,6 +147,9 @@ async function rerun() {
         </div>
       </div>
 
+      <!-- [0x07] 服务器运行故障检测：折线图可视化（测试集样本曲线仅管理员可见） -->
+      <EvalViz0x07 v-if="run.status === 'succeeded' && run.viz0x07" class="mt-6" :viz="run.viz0x07" :show-cases="can.testAccess" />
+
       <div class="mt-6 grid gap-6 lg:grid-cols-[1fr_380px]">
         <div class="min-w-0 space-y-6">
           <!-- 0x6E 服务器故障时序检测专属多折线图可视化 -->
@@ -169,7 +173,7 @@ async function rerun() {
           </div>
 
           <!-- 错误样例 -->
-          <div v-if="can.testAccess && ds && run.status === 'succeeded' && !['signal-processing', 'optimization', 'power-forecast'].includes(ds.task)" class="card p-5">
+          <div v-if="can.testAccess && ds && run.status === 'succeeded' && !['signal-processing', 'optimization', 'power-forecast', 'server-fault-0x07'].includes(ds.task)" class="card p-5">
             <h2 class="section-title mb-1">错误样例</h2>
             <p class="mb-4 text-xs text-gray-500">
               来自测试集，仅管理员可见<template v-if="run.errorSamples">（展示 {{ run.errorSamples.length }} 个真实误判样本）</template>

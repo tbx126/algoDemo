@@ -88,6 +88,14 @@ from fault_0x6e_registry import (
     infer_0x6e_fault,
     load_0x6e_state,
 )
+from fault0x07_api import (  # [0x07] 服务器运行故障检测
+    bootstrap_0x07,
+    ensure_initial_eval_0x07,
+    find_eval_0x07,
+    list_evals_0x07,
+    router_0x07,
+    trigger_eval_0x07,
+)
 
 STATE_FILE = ROOT / "state" / "real_state.json"
 META_FILE = DATA_DIR / "meta.json"
@@ -105,6 +113,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# [0x07] 必须先于通用 /real-api/algorithms/Admin/{algo_name}/infer 注册
+app.include_router(router_0x07)
+ensure_initial_eval_0x07()
 
 _STATE_LOCK = threading.Lock()
 
@@ -1366,6 +1377,11 @@ def bootstrap():
             evals.extend(ev_0x6e)
         else:
             evals.append(build_0x6e_initial_eval(state_0x6e))
+    b0x07 = bootstrap_0x07()  # [0x07]
+    algorithms.extend(b0x07["algorithms"])
+    datasets.extend(b0x07["datasets"])
+    benchmarks.extend(b0x07["benchmarks"])
+    evals.extend(b0x07["evals"])
 
     algorithms.append(rand_algo)
 
@@ -1905,6 +1921,9 @@ def trigger_real_eval(req: EvalRequest):
             st0["evals"] = ev_list
             STATE_0X6E_PATH.write_text(json.dumps(st0, ensure_ascii=False, indent=2), encoding="utf-8")
         return run
+    run_0x07 = trigger_eval_0x07(req.algorithmId, req.algoVersion, req.benchmarkId, req.submittedBy)  # [0x07]
+    if run_0x07 is not None:
+        return run_0x07
     if req.algorithmId == POWER_ALGO_ID and req.benchmarkId == POWER_BENCH_ID:
         res = evaluate_power_on_test()
         now = iso_now()
@@ -2184,6 +2203,7 @@ def list_real_evals():
         if st0:
             ev0 = st0.get("evals")
             evals.extend(ev0 if isinstance(ev0, list) and ev0 else [build_0x6e_initial_eval(st0)])
+    evals.extend(list_evals_0x07())  # [0x07]
     with _CUSTOM_LOCK:
         evals = list(load_custom_state()["evals"]) + evals
     return evals
@@ -2191,6 +2211,9 @@ def list_real_evals():
 
 @app.get("/real-api/evals/{eval_id}")
 def get_real_eval(eval_id: str):
+    run_0x07 = find_eval_0x07(eval_id)  # [0x07]
+    if run_0x07 is not None:
+        return run_0x07
     with _CUSTOM_LOCK:
         cst = load_custom_state()
     run = next((r for r in cst["evals"] if r["id"] == eval_id), None)
