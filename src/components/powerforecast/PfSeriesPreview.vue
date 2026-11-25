@@ -15,7 +15,7 @@ const items = computed(() => {
   const all = props.rows.map((r) => ({
     file: r.file_name.split('/').pop()!,
     station: r.row?.[2] ?? '场站',
-    weather: r.row?.[3] ?? '',
+    weather: r.row?.[4] ?? '',
     value: r.row?.[1] ?? '',
   }))
   const bySt = new Map<string, typeof all>()

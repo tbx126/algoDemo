@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 新能源功率预测标准：在线推理面板（对标 SfInferPanel，支持按场站一键挑样本或上传 CSV） */
+/** 新能源功率预测标准：在线推理面板（按场站从训练集取示例，或上传标准 CSV 并填写场站类型与装机容量） */
 import { computed, onMounted, ref } from 'vue'
 import { Download, FileUp, LoaderCircle, Play, RotateCcw, Shuffle } from 'lucide-vue-next'
 import type { Algorithm, InferenceResult } from '@/types'
@@ -10,7 +10,9 @@ import type { PfCase } from './types'
 const props = defineProps<{ algo: Algorithm; version: string }>()
 
 interface SampleItem {
+  dataset: string
   file: string
+  url: string
   station: string
   kind: string
   weather: string
@@ -26,10 +28,13 @@ const running = ref(false)
 const error = ref('')
 const fileEl = ref<HTMLInputElement>()
 const cursor = new Map<string, number>()
+/** 上传 CSV 时所属场站的类型与装机容量（功率按容量归一化，风电 / 光伏响应不同） */
+const kind = ref<'wind' | 'solar'>('wind')
+const capacity = ref(100)
 
 onMounted(async () => {
   try {
-    const r = await fetch('/real-api/power-forecast/samples?part=train&limit=600')
+    const r = await fetch('/real-api/power-forecast/samples?limit=5000')
     if (r.ok) samples.value = await r.json()
   } catch {
     /* ignore */
@@ -42,7 +47,7 @@ async function pickStation(st: string) {
   const i = (cursor.get(st) ?? -1) + 1
   cursor.set(st, i)
   const s = list[i % list.length]
-  input.value = { dataUrl: `/real-api/datasets/Admin/wind-solar-power-dataset/files/train/${s.file}`, fileName: s.file, size: 0 }
+  input.value = { dataUrl: s.url, fileName: s.file, size: 0 }
   result.value = null
   await run()
 }
@@ -63,7 +68,8 @@ async function run() {
   running.value = true
   error.value = ''
   try {
-    result.value = await infer(props.algo.id, props.version, { ...input.value })
+    const fields = input.value.file ? { kind: kind.value, capacity_mw: String(capacity.value) } : undefined
+    result.value = await infer(props.algo.id, props.version, { ...input.value, fields })
   } catch (e) {
     error.value = (e as Error).message || '推理失败'
   } finally {
@@ -105,11 +111,11 @@ const caseData = computed<PfCase | null>(() => (raw.value?.case as PfCase | unde
     <!-- 上传自定义 CSV -->
     <div v-if="!input" class="flex items-center gap-2">
       <button type="button" class="btn-default flex-1 justify-center text-xs" @click="fileEl?.click()">
-        <FileUp class="size-3.5" />上传 24h 气象与功率 CSV
+        <FileUp class="size-3.5" />上传 24 行标准 CSV（前一天实测 + 次日 NWP）
       </button>
       <a
         v-if="samples.length"
-        :href="`/real-api/datasets/Admin/wind-solar-power-dataset/files/train/${samples[0].file}`"
+        :href="samples[0].url"
         download
         class="btn-ghost text-xs"
         title="下载标准 CSV 示例"
@@ -118,6 +124,12 @@ const caseData = computed<PfCase | null>(() => (raw.value?.case as PfCase | unde
       </a>
     </div>
     <input ref="fileEl" type="file" accept=".csv,text/csv" class="hidden" @change="onFile(($event.target as HTMLInputElement).files?.[0])" />
+    <div v-if="!input || input.file" class="grid grid-cols-2 gap-2 text-xs text-gray-500">
+      <label class="flex flex-col gap-1">上传 CSV 的场站类型
+        <select v-model="kind" class="input py-1 text-xs"><option value="wind">风电</option><option value="solar">光伏</option></select>
+      </label>
+      <label class="flex flex-col gap-1">装机容量（MW）<input v-model.number="capacity" type="number" min="1" class="input py-1 text-xs" /></label>
+    </div>
 
     <!-- 已选文件操作栏 -->
     <div v-if="input" class="flex items-center gap-2">

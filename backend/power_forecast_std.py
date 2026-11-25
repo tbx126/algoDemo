@@ -1,26 +1,27 @@
 """
-新能源场站短期功率预测标准（task = "power-forecast"）—— 对标 server_fault_std.py
+新能源场站短期功率预测标准（task = "power-forecast"）—— 与 server_fault_std 同样的「标准 + 统一评测器」模式
 
-一、数据集标准（backend/data/wind-solar-power-dataset/）：
-  meta.json                  元信息（含 6 座场站、分片统计与哈希）
-  {train,test}/series/*.csv  每个文件 24 行（过去 24h 历史遥测 + 未来 24h NWP 气象预报）
+一、数据集标准（backend/data/<name>/）
+  meta.json                  task = "power-forecast"，stations（场站 -> kind / capacity_mw），benchmark
+  {train,test}/series/*.csv  24 行，第 h 行 = 前一天 h 时实测 + 次日 h 时 NWP 预报：
       hour, wind_speed_ms, irradiance_wm2, temp_c, humidity_pct, pressure_hpa, nwp_wind_ms, nwp_irr_wm2, power_mw
-  {train,test}/labels.csv    表头：file_name, value, station, kind, weather, peak_mw, target_24h
+  {train,test}/labels.csv    file_name, value, station, kind, weather, peak_mw, t0, target_24h
 
-二、统一评测标准（evaluate_power）：
-  - 核心 6 项考核指标：
-      accuracy_rate  考核准确率（(1 - NRMSE) × 100%，主指标）
-      nrmse          归一化 RMSE（%）
-      nmae           归一化 MAE（%）
-      r2             决定系数 R²（%）
-      peak_err_mw    峰值功率误差（MW）
-      qualified_rate 单日合格率（%，单窗口准确率 ≥ 85%）
-  - 统一折线图可视化数据 vizPowerForecast：
-      cases          各场站典型测试窗口（历史 24h + 未来 24h GT vs 预测 + 气象通道）
-      horizonCurve   提前期 +1h..+24h 的 NRMSE / NMAE 增长曲线
-      diurnalCurve   按 0..23 时对齐的平均实测 vs 平均预测日内曲线
-      errorCdf       绝对误差（MW）累计分布 CDF 曲线
-      history        训练/验证收敛曲线（90/10 严格切分，测试集零参与）
+二、算法接口
+  predict_batch(raw: [N, 24, 9] 原始单位（CHANNELS 顺序）, specs: [{"kind": "wind"|"solar", "capacity_mw": float}] * N)
+      -> [N, 24] 次日逐小时功率（MW）
+  算法只拿到输入与场站规格，拿不到真值；真值由评测器自己读取。
+
+三、统一评测（evaluate）
+  考核时段：风电全天 24h；光伏只计 6:00–19:00（夜间出力恒为 0，计入会抬高准确率）
+  accuracy_rate   考核准确率 = (1 − NRMSE) × 100%（主指标，按装机容量归一化，只计考核时段）
+  nrmse / nmae    归一化 RMSE / MAE（%）
+  r2              决定系数 R²（%，各场站分别计算后取平均，避免场站差异与昼夜变化虚高）
+  peak_err_mw     日最大出力误差（MW）
+  qualified_rate  单日准确率 ≥ 85% 的天数占比（%）
+  skill           相对「NWP + 名义功率曲线」基线的 RMSE 降低比例（%，≤ 0 表示不如基线）
+  night_mw        光伏夜间平均预测出力（MW，应接近 0）
+  另给出两个参照基线：持续法（次日 = 前一天）与 NWP + 名义功率曲线（不训练、不看历史）
 """
 from __future__ import annotations
 
@@ -30,28 +31,35 @@ import json
 import time
 import zipfile
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
 TASK = "power-forecast"
 LOOKBACK = 24
 HORIZON = 24
-CAPACITY_MW = 100.0
+DEFAULT_CAPACITY_MW = 100.0
+SOLAR_EVAL_HOURS = range(6, 20)  # 光伏考核时段 6:00–19:00
+QUALIFIED_ACC = 85.0
 
-CHANNELS = [
-    "hour",
-    "wind_speed_ms",
-    "irradiance_wm2",
-    "temp_c",
-    "humidity_pct",
-    "pressure_hpa",
-    "nwp_wind_ms",
-    "nwp_irr_wm2",
-    "power_mw",
+CHANNELS = ["hour", "wind_speed_ms", "irradiance_wm2", "temp_c", "humidity_pct", "pressure_hpa", "nwp_wind_ms", "nwp_irr_wm2", "power_mw"]
+CHANNEL_DIGITS = [0, 2, 1, 1, 1, 1, 2, 1, 2]
+LABEL_COLUMNS = ["file_name", "value", "station", "kind", "weather", "peak_mw", "t0", "target_24h"]
+KINDS = ("wind", "solar")
+
+METRICS = [
+    {"key": "accuracy_rate", "label": "考核准确率", "higherIsBetter": True, "unit": "%", "primary": True},
+    {"key": "nrmse", "label": "归一化 RMSE", "higherIsBetter": False, "unit": "%"},
+    {"key": "nmae", "label": "归一化 MAE", "higherIsBetter": False, "unit": "%"},
+    {"key": "r2", "label": "决定系数 R²", "higherIsBetter": True, "unit": "%"},
+    {"key": "peak_err_mw", "label": "日峰值误差", "higherIsBetter": False, "unit": "MW"},
+    {"key": "qualified_rate", "label": "单日合格率", "higherIsBetter": True, "unit": "%"},
+    {"key": "skill", "label": "相对 NWP 基线提升", "higherIsBetter": True, "unit": "%"},
+    {"key": "night_mw", "label": "光伏夜间误报出力", "higherIsBetter": False, "unit": "MW"},
 ]
-LABEL_COLUMNS = ["file_name", "value", "station", "kind", "weather", "peak_mw", "target_24h"]
 
 
+# ================================================================== 文件读写
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -61,25 +69,18 @@ def sha256_file(path: Path) -> str:
 
 
 def write_series_csv(path: Path, rows: list[dict]) -> None:
+    if len(rows) != LOOKBACK:
+        raise ValueError(f"{path.name}: 需要 {LOOKBACK} 行，实际 {len(rows)} 行")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
         w.writerow(CHANNELS)
         for r in rows:
-            w.writerow([
-                int(r["hour"]),
-                round(float(r["wind_speed_ms"]), 2),
-                round(float(r["irradiance_wm2"]), 1),
-                round(float(r["temp_c"]), 1),
-                round(float(r["humidity_pct"]), 1),
-                round(float(r["pressure_hpa"]), 1),
-                round(float(r["nwp_wind_ms"]), 2),
-                round(float(r["nwp_irr_wm2"]), 1),
-                round(float(r["power_mw"]), 2),
-            ])
+            w.writerow([int(r["hour"]) if c == "hour" else round(float(r[c]), k) for c, k in zip(CHANNELS, CHANNEL_DIGITS)])
 
 
 def write_labels(path: Path, records: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=LABEL_COLUMNS)
         w.writeheader()
@@ -87,200 +88,238 @@ def write_labels(path: Path, records: list[dict]) -> None:
 
 
 def pack_zip(data_dir: Path, split: str) -> tuple[int, str]:
-    split_dir = data_dir / split
     zip_path = data_dir / f"{data_dir.name}-{split}-v1.0.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.write(split_dir / "labels.csv", arcname=f"{split}/labels.csv")
-        for f in sorted((split_dir / "series").glob("*.csv")):
+        zf.write(data_dir / split / "labels.csv", arcname=f"{split}/labels.csv")
+        for f in sorted((data_dir / split / "series").glob("*.csv")):
             zf.write(f, arcname=f"{split}/series/{f.name}")
     return zip_path.stat().st_size, sha256_file(zip_path)
 
 
-def parse_series_rows(rows: list[dict]) -> np.ndarray:
-    """将 24 行 CSV 字典解析为 [24, 9] 原始浮点数组（CHANNELS 顺序）"""
-    arr: list[list[float]] = []
-    for i, r in enumerate(rows[-LOOKBACK:]):
-        wind = float(r.get("wind_speed_ms") or 5.0)
-        irr = float(r.get("irradiance_wm2") or 0.0)
-        arr.append([
-            float(r.get("hour", i % 24)),
-            wind,
-            irr,
-            float(r.get("temp_c") or 20.0),
-            float(r.get("humidity_pct") or 55.0),
-            float(r.get("pressure_hpa") or 1012.0),
-            float(r.get("nwp_wind_ms") if r.get("nwp_wind_ms") not in (None, "") else wind),
-            float(r.get("nwp_irr_wm2") if r.get("nwp_irr_wm2") not in (None, "") else irr),
-            float(r.get("power_mw") or r.get("value") or 30.0),
-        ])
-    if not arr:
-        arr = [[0.0, 5.0, 0.0, 20.0, 55.0, 1012.0, 5.0, 0.0, 25.0]]
-    while len(arr) < LOOKBACK:
-        arr.insert(0, arr[0])
-    return np.asarray(arr, dtype=np.float32)
+def write_meta(data_dir: Path, info: dict, records: dict[str, list[dict]], counts: dict[str, dict[str, int]]) -> dict:
+    for name, sp in (info.get("stations") or {}).items():
+        if sp.get("kind") not in KINDS or not sp.get("capacity_mw"):
+            raise ValueError(f"场站 {name} 缺少 kind（wind / solar）或 capacity_mw")
+    meta = {**info, "task": TASK, "lookback_hours": LOOKBACK, "horizon_hours": HORIZON, "channels": CHANNELS}
+    for split in ("train", "test"):
+        write_labels(data_dir / split / "labels.csv", records[split])
+        size, sha = pack_zip(data_dir, split)
+        meta[split] = {"files": len(records[split]), "rows": len(records[split]), "sizeBytes": size, "contentHash": sha, "classCounts": counts[split]}
+    (data_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    return meta
 
 
-def load_split(data_dir: Path, split: str) -> tuple[np.ndarray, np.ndarray, list[dict]]:
-    split_dir = data_dir / split
-    lbl_path = split_dir / "labels.csv"
-    xs: list[np.ndarray] = []
-    ys: list[np.ndarray] = []
-    metas: list[dict] = []
-    with lbl_path.open("r", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            with (split_dir / row["file_name"]).open("r", encoding="utf-8") as sf:
-                srows = list(csv.DictReader(sf))
-            xs.append(parse_series_rows(srows))
-            ys.append(np.asarray(json.loads(row["target_24h"]), dtype=np.float32))
-            metas.append(row)
-    return np.stack(xs, axis=0), np.stack(ys, axis=0), metas
+def read_meta(data_dir: Path) -> dict | None:
+    p = data_dir / "meta.json"
+    if not p.exists():
+        return None
+    try:
+        meta = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return meta if meta.get("task") == TASK else None
 
 
-def build_case_payload(raw: np.ndarray, gt_24h: np.ndarray | None, pred_24h: np.ndarray | None, meta: dict) -> dict:
-    """构建单个 24h 历史 + 24h 未来窗口的前端折线图数据结构"""
-    hist_power = [round(float(v), 2) for v in raw[:, 8]]
-    start_hour = int(round(float(raw[0, 0])))
-    hours_48 = [f"{(start_hour + i) % 24:02d}:00" for i in range(LOOKBACK + HORIZON)]
-    out: dict = {
-        "file": Path(meta.get("file_name", "sample.csv")).name,
-        "station": meta.get("station", "新能源场站"),
-        "kind": meta.get("kind", "wind"),
-        "weather": meta.get("weather", "晴"),
-        "startHour": start_hour,
-        "hours48": hours_48,
-        "history": hist_power,
-        "channels": {
-            "wind_speed_ms": [round(float(v), 2) for v in raw[:, 1]],
-            "irradiance_wm2": [round(float(v), 1) for v in raw[:, 2]],
-            "nwp_wind_ms": [round(float(v), 2) for v in raw[:, 6]],
-            "nwp_irr_wm2": [round(float(v), 1) for v in raw[:, 7]],
-            "temp_c": [round(float(v), 1) for v in raw[:, 3]],
-        },
-        "gt": [round(float(v), 2) for v in gt_24h] if gt_24h is not None else None,
-        "pred": [round(float(v), 2) for v in pred_24h] if pred_24h is not None else None,
-    }
-    if gt_24h is not None and pred_24h is not None:
-        diff = pred_24h - gt_24h
-        nrmse = float(np.sqrt(np.mean((diff / CAPACITY_MW) ** 2)))
-        nmae = float(np.mean(np.abs(diff) / CAPACITY_MW))
-        out["accuracy"] = round(max(0.0, (1.0 - nrmse) * 100.0), 2)
-        out["nrmse"] = round(nrmse * 100.0, 2)
-        out["nmae"] = round(nmae * 100.0, 2)
-        out["peakErrMw"] = round(abs(float(np.max(pred_24h)) - float(np.max(gt_24h))), 2)
+def read_labels(data_dir: Path, split: str) -> list[dict]:
+    with (data_dir / split / "labels.csv").open("r", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def parse_series_rows(rows: list[dict], source: str = "") -> np.ndarray:
+    """标准 CSV 行 -> [24, 9]；缺列、行数不足或含非数值时直接报错（不做静默补值）"""
+    if not rows:
+        raise ValueError(f"{source} 为空")
+    missing = [c for c in CHANNELS if c not in rows[0]]
+    if missing:
+        raise ValueError(f"{source} 不符合功率预测标准，缺少列：{', '.join(missing)}（需要：{', '.join(CHANNELS)}）")
+    if len(rows) < LOOKBACK:
+        raise ValueError(f"{source} 需要 {LOOKBACK} 行（前一天 24h 实测 + 次日 24h NWP），实际 {len(rows)} 行")
+    try:
+        arr = np.asarray([[float(r[c]) for c in CHANNELS] for r in rows[-LOOKBACK:]], dtype=np.float32)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{source} 含空值或非数值：{exc}") from exc
+    if not np.all(np.isfinite(arr)):
+        raise ValueError(f"{source} 含非有限数值")
+    return arr
+
+
+def read_series(path: Path) -> np.ndarray:
+    with path.open("r", encoding="utf-8-sig") as f:
+        return parse_series_rows(list(csv.DictReader(f)), path.name)
+
+
+def station_spec(meta: dict | None, station: str, kind: str | None = None) -> dict:
+    sp = (meta or {}).get("stations", {}).get(station) if isinstance((meta or {}).get("stations"), dict) else None
+    if sp:
+        return {"kind": sp["kind"], "capacity_mw": float(sp["capacity_mw"])}
+    return {"kind": kind if kind in KINDS else "wind", "capacity_mw": DEFAULT_CAPACITY_MW}
+
+
+def load_split(data_dir: Path, split: str) -> tuple[np.ndarray, np.ndarray, list[dict], list[dict]]:
+    """返回 (输入 [N, 24, 9], 真值 [N, 24] MW, 元数据, 场站规格)"""
+    meta = read_meta(data_dir)
+    xs, ys, metas, specs = [], [], [], []
+    for row in read_labels(data_dir, split):
+        xs.append(read_series(data_dir / split / row["file_name"]))
+        ys.append(json.loads(row["target_24h"]))
+        metas.append(row)
+        specs.append(station_spec(meta, row["station"], row.get("kind")))
+    return np.stack(xs), np.asarray(ys, dtype=np.float32), metas, specs
+
+
+# ================================================================== 基线
+def nominal_power(raw: np.ndarray, specs: list[dict]) -> np.ndarray:
+    """NWP + 名义功率曲线（通用风机功率曲线 / 光伏 1000 W/m² 标准条件 × 0.9 系统效率），不训练、不看历史功率"""
+    out = np.zeros(raw.shape[:2], dtype=np.float32)
+    for i, sp in enumerate(specs):
+        cap = sp["capacity_mw"]
+        if sp["kind"] == "wind":
+            v = raw[i, :, 6]
+            p = np.where((v < 3) | (v > 25), 0.0, np.where(v >= 12, 1.0, ((np.clip(v, 3, 12) - 3) / 9.0) ** 3))
+        else:
+            p = np.clip(raw[i, :, 7] / 1000.0 * 0.9, 0, 1)
+        out[i] = cap * p
     return out
 
 
-def evaluate_predictions(
-    raw_test: np.ndarray,
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    metas: list[dict],
+def persistence(raw: np.ndarray, specs: list[dict]) -> np.ndarray:
+    """持续法：次日 h 时功率 = 前一天 h 时实测功率"""
+    return raw[:, :, 8].astype(np.float32).copy()
+
+
+# ================================================================== 评测
+def eval_mask(raw: np.ndarray, specs: list[dict]) -> np.ndarray:
+    """[N, 24] 考核时段：风电全天，光伏 6:00–19:00（第 h 行的 hour 即预测时刻）"""
+    hours = np.rint(raw[:, :, 0]).astype(int) % 24
+    solar = np.array([sp["kind"] == "solar" for sp in specs])[:, None]
+    return ~solar | np.isin(hours, list(SOLAR_EVAL_HOURS))
+
+
+def _scores(pred: np.ndarray, y: np.ndarray, cap: np.ndarray, mask: np.ndarray) -> tuple[float, float]:
+    d = ((pred - y) / cap)[mask]
+    return float(np.sqrt(np.mean(d ** 2))), float(np.mean(np.abs(d)))
+
+
+def _acc(nrmse: float) -> float:
+    return round(max(0.0, (1.0 - nrmse) * 100.0), 2)
+
+
+def build_case_payload(raw: np.ndarray, spec: dict, meta: dict, gt: np.ndarray | None, pred: np.ndarray | None) -> dict:
+    cap = spec["capacity_mw"]
+    nominal = nominal_power(raw[None], [spec])[0]
+    out: dict = {
+        "file": Path(meta.get("file_name", "sample.csv")).name,
+        "station": meta.get("station", "自定义场站"),
+        "kind": spec["kind"],
+        "capacityMw": cap,
+        "weather": meta.get("weather", ""),
+        "startHour": int(round(float(raw[0, 0]))),
+        "history": [round(float(v), 2) for v in raw[:, 8]],
+        "channels": {c: [round(float(v), 2) for v in raw[:, k]] for k, c in enumerate(CHANNELS) if c not in ("hour", "power_mw")},
+        "gt": [round(float(v), 2) for v in gt] if gt is not None else None,
+        "pred": [round(float(v), 2) for v in pred] if pred is not None else None,
+        "nominal": [round(float(v), 2) for v in nominal],
+    }
+    if gt is not None and pred is not None:
+        m = eval_mask(raw[None], [spec])[0]
+        nr, na = _scores(pred[None], gt[None], np.float32(cap), m[None])
+        out.update({"accuracy": _acc(nr), "nrmse": round(nr * 100, 2), "nmae": round(na * 100, 2), "peakErrMw": round(abs(float(pred.max()) - float(gt.max())), 2)})
+    return out
+
+
+def evaluate(
+    predict_batch: Callable[[np.ndarray, list[dict]], np.ndarray],
+    data_dir: Path,
     history: list[dict] | None = None,
-    device: str = "CPU (PyTorch)",
-    elapsed_sec: float = 0.3,
+    say: Callable[[int, str], None] | None = None,
 ) -> dict:
-    """统一功率预测评测器：计算 6 项工业考核指标 + 分场站指标 + 5 维折线图可视化"""
-    diff = y_pred - y_true  # [N, 24] MW
-    nrmse = float(np.sqrt(np.mean((diff / CAPACITY_MW) ** 2)))
-    nmae = float(np.mean(np.abs(diff) / CAPACITY_MW))
-    acc_rate = max(0.0, (1.0 - nrmse) * 100.0)
+    """统一评测器：任意符合标准的算法 × 任意符合标准的数据集测试集。真值只在这里读取，不交给算法"""
+    say = say or (lambda p, m: None)
+    t0 = time.perf_counter()
+    raw, y, metas, specs = load_split(data_dir, "test")
+    say(30, f"[runner] 挂载 {data_dir.name}@v1.0/test：{len(metas)} 个日前预测窗口（标准 {TASK}），共 {y.size:,} 个逐小时真值；算法只接收输入与场站规格")
 
-    ss_res = float(np.sum(diff ** 2))
-    ss_tot = float(np.sum((y_true - np.mean(y_true)) ** 2))
-    r2 = max(0.0, (1.0 - ss_res / max(1e-6, ss_tot)) * 100.0)
+    t_inf = time.perf_counter()
+    pred = np.asarray(predict_batch(raw.copy(), [dict(s) for s in specs]), dtype=np.float64)
+    infer_ms = (time.perf_counter() - t_inf) * 1000
+    if pred.shape != y.shape:
+        raise ValueError(f"算法输出形状不符合标准：需要 {y.shape}，实际 {pred.shape}")
+    if not np.all(np.isfinite(pred)):
+        raise ValueError("算法输出含 NaN / Inf")
+    say(60, f"[runner] 推理完成：{len(raw)} 个窗口用时 {infer_ms:.1f} ms")
 
-    peak_errs = np.abs(np.max(y_pred, axis=1) - np.max(y_true, axis=1))
-    peak_err_mw = float(np.mean(peak_errs))
+    cap = np.array([s["capacity_mw"] for s in specs], dtype=np.float64)[:, None]
+    mask = eval_mask(raw, specs)
+    solar = np.array([s["kind"] == "solar" for s in specs])
+    nrmse, nmae = _scores(pred, y, cap, mask)
 
-    win_nrmse = np.sqrt(np.mean((diff / CAPACITY_MW) ** 2, axis=1))
-    win_acc = np.maximum(0.0, (1.0 - win_nrmse) * 100.0)
-    qualified_rate = float(np.mean(win_acc >= 85.0) * 100.0)
+    stations: dict[str, list[int]] = {}
+    for i, m in enumerate(metas):
+        stations.setdefault(m["station"], []).append(i)
+    r2s, per_class = [], []
+    for st, idx in stations.items():
+        mk = mask[idx]
+        yt, yp = y[idx][mk], pred[idx][mk]
+        r2s.append(1.0 - float(np.sum((yp - yt) ** 2)) / max(1e-6, float(np.sum((yt - yt.mean()) ** 2))))
+        s_nr, s_na = _scores(pred[idx], y[idx], cap[idx], mk)
+        per_class.append({"label": st, "value": _acc(s_nr), "nrmse": round(s_nr * 100, 2), "nmae": round(s_na * 100, 2), "support": len(idx)})
+
+    win_acc = np.array([_acc(_scores(pred[i : i + 1], y[i : i + 1], cap[i : i + 1], mask[i : i + 1])[0]) for i in range(len(y))])
+    base_nom, base_per = nominal_power(raw, specs), persistence(raw, specs)
+    nom_nrmse, _ = _scores(base_nom, y, cap, mask)
+    per_nrmse, _ = _scores(base_per, y, cap, mask)
+    night = solar[:, None] & ~mask
 
     metrics = {
-        "accuracy_rate": round(acc_rate, 2),
-        "nrmse": round(nrmse * 100.0, 2),
-        "nmae": round(nmae * 100.0, 2),
-        "r2": round(r2, 2),
-        "peak_err_mw": round(peak_err_mw, 2),
-        "qualified_rate": round(qualified_rate, 2),
+        "accuracy_rate": _acc(nrmse),
+        "nrmse": round(nrmse * 100, 2),
+        "nmae": round(nmae * 100, 2),
+        "r2": round(max(0.0, float(np.mean(r2s))) * 100, 2),
+        "peak_err_mw": round(float(np.mean(np.abs(pred.max(1) - y.max(1)))), 2),
+        "qualified_rate": round(float(np.mean(win_acc >= QUALIFIED_ACC)) * 100, 2),
+        "skill": round((1.0 - nrmse / max(1e-9, nom_nrmse)) * 100, 2),
+        "night_mw": round(float(np.mean(np.abs(pred[night]))) if night.any() else 0.0, 2),
     }
+    say(80, "[runner] 生成可视化数据：典型样本、提前期误差（含基线）、日内曲线、误差分布、训练曲线")
 
-    # 分场站准确率统计
-    by_station: dict[str, list[int]] = {}
-    for idx, m in enumerate(metas):
-        by_station.setdefault(m["station"], []).append(idx)
-
-    per_class = []
-    for st_name, idxs in by_station.items():
-        d_sub = diff[idxs]
-        st_nrmse = float(np.sqrt(np.mean((d_sub / CAPACITY_MW) ** 2)))
-        st_nmae = float(np.mean(np.abs(d_sub) / CAPACITY_MW))
-        per_class.append({
-            "label": st_name,
-            "value": round(max(0.0, (1.0 - st_nrmse) * 100.0), 2),
-            "nrmse": round(st_nrmse * 100.0, 2),
-            "nmae": round(st_nmae * 100.0, 2),
-            "support": len(idxs),
-        })
-
-    # 折线图 1：每个场站挑选 1 条代表性测试样本（含历史 24h + 未来 24h GT vs 预测 + 气象通道）
     cases = []
-    for st_name, idxs in by_station.items():
-        # 选功率起伏较明显、展示效果最直观的中位数表现样本
-        ranked = sorted(idxs, key=lambda i: float(np.std(y_true[i])), reverse=True)
-        pick = ranked[min(2, len(ranked) - 1)]
-        cases.append(build_case_payload(raw_test[pick], y_true[pick], y_pred[pick], metas[pick]))
+    for st, idx in stations.items():
+        pick = sorted(idx, key=lambda i: float(np.std(y[i])), reverse=True)[min(2, len(idx) - 1)]
+        cases.append(build_case_payload(raw[pick], specs[pick], metas[pick], y[pick], pred[pick]))
 
-    # 折线图 2：提前期（+1h .. +24h）NRMSE & NMAE 误差增长曲线
-    horizon_curve = []
-    for h in range(HORIZON):
-        dh = diff[:, h] / CAPACITY_MW
-        horizon_curve.append({
-            "hour": h + 1,
-            "nrmse": round(float(np.sqrt(np.mean(dh ** 2))) * 100.0, 2),
-            "nmae": round(float(np.mean(np.abs(dh))) * 100.0, 2),
-        })
+    def lead_curve(p: np.ndarray) -> list[float]:
+        return [round(_scores(p[:, h : h + 1], y[:, h : h + 1], cap, mask[:, h : h + 1])[0] * 100, 2) for h in range(HORIZON)]
 
-    # 折线图 3：24h 日内时刻对齐曲线（0:00 .. 23:00 平均实测 vs 平均预测）
-    diurnal_gt = [[] for _ in range(24)]
-    diurnal_pred = [[] for _ in range(24)]
-    for i in range(len(metas)):
-        sh = int(round(float(raw_test[i, 0, 0])))
-        for h in range(HORIZON):
-            tod = (sh + LOOKBACK + h) % 24
-            diurnal_gt[tod].append(float(y_true[i, h]))
-            diurnal_pred[tod].append(float(y_pred[i, h]))
-    diurnal_curve = [
-        {
-            "hour": tod,
-            "gt": round(float(np.mean(diurnal_gt[tod])) if diurnal_gt[tod] else 0.0, 2),
-            "pred": round(float(np.mean(diurnal_pred[tod])) if diurnal_pred[tod] else 0.0, 2),
-        }
-        for tod in range(24)
+    model_lead, nom_lead, per_lead = lead_curve(pred), lead_curve(base_nom), lead_curve(base_per)
+    horizon_curve = [
+        {"hour": h + 1, "nrmse": model_lead[h], "nominal": nom_lead[h], "persistence": per_lead[h],
+         "nmae": round(_scores(pred[:, h : h + 1], y[:, h : h + 1], cap, mask[:, h : h + 1])[1] * 100, 2)}
+        for h in range(HORIZON)
     ]
-
-    # 折线图 4：绝对误差累计分布 CDF（0 MW -> 20 MW）
-    abs_err = np.abs(diff).reshape(-1)
-    error_cdf = [
-        {"mw": mw, "pct": round(float(np.mean(abs_err <= mw)) * 100.0, 2)}
-        for mw in range(0, 21, 1)
-    ]
+    hours = np.rint(raw[:, :, 0]).astype(int) % 24
+    diurnal = [{"hour": t, "gt": round(float(y[hours == t].mean()), 2), "pred": round(float(pred[hours == t].mean()), 2)} for t in range(24)]
+    abs_err = np.abs(pred - y)[mask]
+    error_cdf = [{"mw": mw, "pct": round(float(np.mean(abs_err <= mw)) * 100, 2)} for mw in range(0, 31)]
 
     return {
         "metrics": metrics,
         "perClass": per_class,
-        "perClassLabel": "各场站预测准确率（%）",
+        "perClassLabel": "各场站考核准确率（%）",
+        "latencyMs": round(infer_ms / max(1, len(raw)), 3),
+        "durationSec": round(time.perf_counter() - t0, 2),
         "vizPowerForecast": {
-            "capacityMw": CAPACITY_MW,
             "lookback": LOOKBACK,
             "horizon": HORIZON,
+            "solarEvalHours": [SOLAR_EVAL_HOURS.start, SOLAR_EVAL_HOURS.stop - 1],
+            "evalHours": int(mask.sum()),
+            "baselines": [
+                {"key": "nominal", "name": "NWP + 名义功率曲线", "accuracy": _acc(nom_nrmse), "nrmse": round(nom_nrmse * 100, 2)},
+                {"key": "persistence", "name": "持续法（次日 = 前一天）", "accuracy": _acc(per_nrmse), "nrmse": round(per_nrmse * 100, 2)},
+            ],
             "cases": cases,
             "horizonCurve": horizon_curve,
-            "diurnalCurve": diurnal_curve,
+            "diurnalCurve": diurnal,
             "errorCdf": error_cdf,
             "history": history or [],
         },
-        "samples": len(metas),
-        "durationSec": max(0.2, round(elapsed_sec, 2)),
-        "device": device,
     }

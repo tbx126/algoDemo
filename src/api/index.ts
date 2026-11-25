@@ -100,21 +100,10 @@ for (const a of SOURCES.algorithms) {
   if (!Array.isArray(a.files)) a.files = []
   if (a.selfDeveloped === undefined && DEFAULT_SELF_DEVELOPED_IDS.has(a.id)) a.selfDeveloped = true
   for (const v of a.versions ?? []) {
-    if (v.gpuMem === undefined) v.gpuMem = a.id === 'Admin/power-dlinear' ? 0.1 : 1
+    if (v.gpuMem === undefined) v.gpuMem = 1
     if (!Array.isArray(v.buildLog)) v.buildLog = []
     if (!v.baseImage) v.baseImage = 'pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime'
-    if (v.weightsSize === undefined) v.weightsSize = a.id === 'Admin/power-dlinear' ? 97346 : 0
-  }
-  if (a.id === 'Admin/power-dlinear' && a.files.length === 0) {
-    a.files = [
-      { path: 'power_dlinear.py', size: 9420, kind: 'code' },
-      { path: 'weights/v1.0.0_power_dlinear.pt', size: 97346, kind: 'weights' },
-      { path: 'algo.yaml', size: 486, kind: 'config' },
-      { path: 'README.md', size: 960, kind: 'doc' },
-    ]
-    if (!a.algoYaml) {
-      a.algoYaml = `name: power-dlinear\nversion: v1.0.0\ntask: power-forecast\nbusiness: production\nframework: PyTorch\nentrypoint: power_dlinear.py:predict\n`
-    }
+    if (v.weightsSize === undefined) v.weightsSize = 0
   }
 }
 for (const t of SOURCES.algorithms.flatMap((a) => a.tags)) if (t && !SOURCES.tags.includes(t)) SOURCES.tags.push(t)
@@ -273,8 +262,8 @@ function applyRealBootstrap(payload: {
     const ai = db.algorithms.findIndex((a) => a.id === algo.id)
     if (ai >= 0) {
       const prev = db.algorithms[ai]
-      // 服务器故障检测标准算法：任务类型与卡片（含跨数据集标准评测结果表）以后端为准，旧缓存不能覆盖
-      const isStd = algo.task === 'server-fault'
+      // 标准算法（服务器故障检测 / 功率预测）：任务类型与卡片（含标准评测结果表）以后端为准，旧缓存不能覆盖
+      const isStd = algo.task === 'server-fault' || algo.task === 'power-forecast'
       const merged: Algorithm = {
         ...algo,
         task: isStd ? algo.task : prev.task || algo.task,
@@ -861,7 +850,7 @@ export async function listEvals(f: { algorithmId?: string; benchmarkId?: string;
 }
 
 export async function getEval(id: string): Promise<EvalRun> {
-  if (id.startsWith('ev-real-') || id.startsWith('ev-dehaze-') || id.startsWith('ev-custom-') || id.startsWith('ev-power-') || id.startsWith('ev-sf-')) {
+  if (id.startsWith('ev-real-') || id.startsWith('ev-dehaze-') || id.startsWith('ev-custom-') || id.startsWith('ev-pf-') || id.startsWith('ev-sf-')) {
     await syncRealBackend(!realBackendAvailable)
     if (realBackendAvailable) {
       const resp = await fetch(`/real-api/evals/${encodeURIComponent(id)}`)

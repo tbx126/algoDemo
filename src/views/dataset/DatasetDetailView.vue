@@ -298,7 +298,7 @@ function download(p: SplitName) {
             </template>
             <!-- 新能源功率预测标准数据集：series/ 48h 功率与气象折线图预览 -->
             <template v-else-if="ds.task === 'power-forecast' && isRealDataset">
-              <h2 class="mt-8 mb-3 text-sm font-semibold">series/ 功率时序折线图预览 <span class="font-normal text-gray-500">· 虚线为过去 24h 历史实测，实线为未来 24h 真实功率（GT）</span></h2>
+              <h2 class="mt-8 mb-3 text-sm font-semibold">series/ 功率时序折线图预览 <span class="font-normal text-gray-500">· 灰线为前一天 24h 实测，蓝线为次日 24h 真实功率（GT），紫色虚线为 NWP + 名义功率曲线基线</span></h2>
               <PfSeriesPreview :dataset-id="ds.id" :part="partName" :rows="realRows" :max="24" />
             </template>
             <template v-else>
