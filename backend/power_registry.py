@@ -3,7 +3,7 @@
 
   - 模型：PowerDLinearNet = 历史功率趋势-季节分解（DLinear）+ 逐小时 NWP / 历史多变量 1D-CNN + 全局门控
   - 接口：predict_batch(raw [N, 24, 9], specs) -> [N, 24] MW；只使用输入与场站规格（类型、装机容量），拿不到真值
-  - 训练：只读训练集；按时间切分验证集（最后 20 天，并剔除与验证集时间重叠的 2 个窗口），保存验证集最优的一轮
+  - 训练：只读各标准数据集的训练集（联合训练）；按时间切分验证集（最后 20 天，并剔除与验证集时间重叠的 2 个窗口），保存验证集最优的一轮
   - 权重：backend/models/power-forecast/v1.0.0_power_dlinear.pt；训练记录：backend/state/power_state.json
 """
 from __future__ import annotations
@@ -151,17 +151,23 @@ def train(epochs: int = 80) -> dict:
     torch.manual_seed(42)
     np.random.seed(42)
 
-    raw, y_mw, metas, specs = pstd.load_split(TRAIN_DATA_DIR, "train")
-    X = _encode(raw, specs)
-    cap = np.array([s["capacity_mw"] for s in specs], dtype=np.float32)[:, None]
-    Y = (y_mw / cap).astype(np.float32)
-    mask = pstd.eval_mask(raw, specs)
-
-    # 按时间切分：最后 VAL_DAYS 天为验证集，再往前 PURGE_DAYS 天的窗口剔除（与验证窗口有时间重叠）
-    t0 = np.array([int(m["t0"]) for m in metas])
-    val_start = t0.max() - (VAL_DAYS - 1) * 24
-    val_idx = np.where(t0 >= val_start)[0]
-    tr_idx = np.where(t0 < val_start - PURGE_DAYS * 24)[0]
+    # 联合使用全部标准数据集的训练集（与其他功率预测算法相同，保证对比公平）；测试集不参与
+    Xs, Ys, masks, tr_parts, val_parts, offset = [], [], [], [], [], 0
+    train_dirs = [d for d in sorted(TRAIN_DATA_DIR.parent.iterdir()) if d.is_dir() and pstd.read_meta(d)]
+    for d in train_dirs:
+        raw, y_mw, metas, specs = pstd.load_split(d, "train")
+        cap = np.array([s["capacity_mw"] for s in specs], dtype=np.float32)[:, None]
+        Xs.append(_encode(raw, specs))
+        Ys.append((y_mw / cap).astype(np.float32))
+        masks.append(pstd.eval_mask(raw, specs))
+        # 每个数据集各自按时间切分：最后 VAL_DAYS 天为验证集，再往前 PURGE_DAYS 天的窗口剔除（与验证窗口有时间重叠）
+        t0 = np.array([int(m["t0"]) for m in metas])
+        val_start = t0.max() - (VAL_DAYS - 1) * 24
+        val_parts.append(np.where(t0 >= val_start)[0] + offset)
+        tr_parts.append(np.where(t0 < val_start - PURGE_DAYS * 24)[0] + offset)
+        offset += len(raw)
+    X, Y, mask = np.concatenate(Xs), np.concatenate(Ys), np.concatenate(masks)
+    tr_idx, val_idx = np.concatenate(tr_parts), np.concatenate(val_parts)
 
     xt, yt = torch.from_numpy(X[tr_idx]).to(_DEVICE), torch.from_numpy(Y[tr_idx]).to(_DEVICE)
     xv, yv = torch.from_numpy(X[val_idx]).to(_DEVICE), torch.from_numpy(Y[val_idx]).to(_DEVICE)
@@ -213,6 +219,7 @@ def train(epochs: int = 80) -> dict:
         "device": device_label(),
         "epochs": epochs,
         "best_epoch": best["epoch"],
+        "train_datasets": [d.name for d in train_dirs],
         "split": {"train_windows": int(len(tr_idx)), "val_windows": int(len(val_idx)), "val_days": VAL_DAYS, "purge_days": PURGE_DAYS},
         "history": history,
     }

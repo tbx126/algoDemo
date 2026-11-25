@@ -221,7 +221,8 @@ const accept = computed(() => (isImageTask.value ? 'image/*' : props.algo.task =
 
     <!-- 服务器故障检测标准：所有标准算法共用的推理与折线图面板 -->
     <SfInferPanel v-else-if="algo.task === 'server-fault'" :algo="algo" :version="version" />
-    <PfInferPanel v-else-if="algo.id === 'Admin/power-dlinear'" :algo="algo" :version="version" />
+    <!-- 新能源功率预测标准：所有标准算法共用的推理与折线图面板 -->
+    <PfInferPanel v-else-if="algo.task === 'power-forecast'" :algo="algo" :version="version" />
 
     <div v-else class="space-y-3 p-4">
       <div v-if="isRandomAlgo" class="flex items-center gap-2 text-xs">

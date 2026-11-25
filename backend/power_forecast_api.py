@@ -28,6 +28,9 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 import power_forecast_std as pstd
+import power_lgbm_autoreg
+import power_lgbm_direct
+import power_lgbm_hybrid
 import power_registry
 
 ROOT = Path(__file__).resolve().parent
@@ -37,7 +40,12 @@ EVALUATOR_ID = "power-forecast-std-evaluator"
 EVALUATOR_VERSION = "v2.0.0"
 BASE_IMAGE = "pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime"
 
-ALGORITHM_MODULES: list[ModuleType] = [power_registry]
+ALGORITHM_MODULES: list[ModuleType] = [
+    power_registry,
+    power_lgbm_hybrid,
+    power_lgbm_direct,
+    power_lgbm_autoreg,
+]
 ALGOS: dict[str, ModuleType] = {m.ALGO_ID: m for m in ALGORITHM_MODULES}
 
 router_pf = APIRouter()
@@ -186,7 +194,14 @@ def _save_evals(evals: list[dict]) -> None:
     EVALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = EVALS_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(evals, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(EVALS_PATH)
+    for attempt in range(6):
+        try:
+            tmp.replace(EVALS_PATH)
+            return
+        except PermissionError:
+            if attempt == 5:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 def _update(eval_id: str, log: str | None = None, **fields) -> None:
@@ -332,16 +347,20 @@ def _algorithm_obj(mod: ModuleType, evals: list[dict], benches: dict) -> dict:
     if rows:
         table = "\n## 标准评测结果（新能源功率预测标准，同一评测器）\n\n| 评测基准 | 考核准确率 % | NRMSE % | 相对 NWP 基线提升 % | 基线：NWP + 名义曲线 % | 基线：持续法 % |\n| --- | --- | --- | --- | --- | --- |\n" + "\n".join(rows) + "\n"
     readme = card["readme"].rstrip() + "\n" + table
+    framework = card.get("framework", "PyTorch")
+    runtime = card.get("runtime", "Python 3.12 · PyTorch 2.x · NumPy")
+    base_image = card.get("baseImage", "python:3.12-slim" if framework == "LightGBM" else BASE_IMAGE)
+    gpu_mem = card.get("gpuMem", 0.1)
     algo_yaml = f"""name: {card['name']}
 version: v1.0.0
 task: {pstd.TASK}
 business: {card['business']}
-framework: PyTorch
+framework: {framework}
 summary: {card['summary']}
 tags:
 """ + "".join(f"  - {t}\n" for t in card["tags"]) + f"""entrypoint: {card['codeFile']}:predict_batch
 standard: power_forecast_std（输入 [N, 24, 9] + 场站规格，输出 [N, 24] MW）
-runtime: Python 3.12 · PyTorch 2.x · NumPy
+runtime: {runtime}
 """
     trained = state.get("trained_at", _now())
     code_bytes = mod.CODE_PATH.stat().st_size
@@ -353,7 +372,7 @@ runtime: Python 3.12 · PyTorch 2.x · NumPy
         "task": pstd.TASK,
         "business": card["business"],
         "selfDeveloped": True,
-        "framework": "PyTorch",
+        "framework": framework,
         "summary": card["summary"],
         "readme": readme,
         "algoYaml": algo_yaml,
@@ -378,10 +397,10 @@ runtime: Python 3.12 · PyTorch 2.x · NumPy
             "imageDigest": _digest(mod.CODE_PATH, mod.WEIGHT_PATH),
             "weightsHash": _weights_hash(mod),
             "weightsSize": wbytes,
-            "baseImage": BASE_IMAGE,
-            "gpuMem": 0.1,
+            "baseImage": base_image,
+            "gpuMem": gpu_mem,
             "buildLog": [
-                f"[build] 加载底座镜像 {BASE_IMAGE}",
+                f"[build] 加载底座镜像 {base_image}",
                 f"[build] 校验权重文件 {mod.WEIGHT_PATH.name}（{wbytes:,} B，{_weights_hash(mod)}）通过",
                 "[build] 功率预测标准接口自检：predict_batch([N, 24, 9], specs) -> [N, 24] MW",
             ],
