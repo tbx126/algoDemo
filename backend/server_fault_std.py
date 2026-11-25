@@ -276,6 +276,34 @@ METRICS = [
 ]
 
 
+CAUSAL_CUTS = (15, 30, 45)
+CAUSAL_TOL = 1e-3
+
+
+def check_causal(predict_batch: Callable[[np.ndarray, list[dict]], dict], raw: np.ndarray, specs: list[dict], n: int = 32) -> None:
+    """因果性检查：把第 t 分钟之后的数据换成另一个窗口的数据，第 0~t 分钟的输出必须不变。
+    逐分钟输出代表「此刻能给出的判断」，只允许使用当前及过去的数据；不满足即视为偷看未来，评测失败。"""
+    k = min(n, len(raw))
+    if k < 2:
+        return
+    sel = np.linspace(0, len(raw) - 1, k).astype(int)
+    donor = np.roll(sel, 1)
+    # 用同一批样本、同样批大小重新推理一次作为对照，排除 GPU 上批大小不同带来的浮点误差
+    base = predict_batch(raw[sel].copy(), [specs[i] for i in sel])
+    for t in CAUSAL_CUTS:
+        mixed = raw[sel].copy()
+        mixed[:, t + 1 :] = raw[donor, t + 1 :]
+        out = predict_batch(mixed, [specs[i] for i in sel])
+        for key in ("fault_prob", "warn_prob", "state"):
+            if base.get(key) is None or out.get(key) is None:
+                continue
+            a = np.asarray(base[key], dtype=np.float64)[:, : t + 1]
+            b = np.asarray(out[key], dtype=np.float64)[:, : t + 1]
+            diff = float(np.abs(a - b).max())
+            if diff > (0.0 if key == "state" else CAUSAL_TOL):
+                raise ValueError(f"因果性检查未通过：改动第 {t + 1} 分钟之后的数据，第 0~{t} 分钟的 {key} 输出变化了 {diff:.4f}（算法使用了未来数据）")
+
+
 def evaluate(
     predict_batch: Callable[[np.ndarray, list[dict]], dict],
     data_dir: Path,
@@ -298,7 +326,9 @@ def evaluate(
     if P.shape != Y.shape or (S is not None and S.shape != Y.shape) or (W is not None and W.shape != Y.shape):
         raise ValueError(f"算法输出形状不符合标准：需要 {Y.shape}")
     caps = "故障概率" + (" + 状态码" if S is not None else "") + (" + 预警概率" if W is not None else "")
-    say(60, f"[runner] 推理完成：{len(RAW)} 个窗口用时 {infer_ms:.1f} ms，算法输出 {caps}")
+    say(55, f"[runner] 推理完成：{len(RAW)} 个窗口用时 {infer_ms:.1f} ms，算法输出 {caps}")
+    check_causal(predict_batch, RAW, specs)
+    say(60, f"[runner] 因果性检查通过：替换第 {', '.join(str(t + 1) for t in CAUSAL_CUTS)} 分钟之后的数据，之前各分钟输出不变（未使用未来数据）")
 
     is_fault = Y > 0
     flag = P >= 0.5

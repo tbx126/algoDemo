@@ -89,12 +89,14 @@ class _CausalBlock(nn.Module):
         self.pad = 2 * dilation
         self.conv1 = nn.Conv1d(ch, ch, kernel_size=3, dilation=dilation)
         self.conv2 = nn.Conv1d(ch, ch, kernel_size=3, dilation=dilation)
-        self.norm = nn.GroupNorm(8, ch)
+        # 逐分钟 LayerNorm（只在通道维上归一化）。不能用 GroupNorm / BatchNorm 按时间维统计：
+        # 那样每一分钟的输出都会受到同一窗口里未来分钟的影响，等于偷看未来
+        self.norm = nn.LayerNorm(ch)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = F.gelu(self.conv1(F.pad(x, (self.pad, 0))))
         y = self.conv2(F.pad(y, (self.pad, 0)))
-        return F.gelu(self.norm(x + y))
+        return F.gelu(self.norm((x + y).transpose(1, 2)).transpose(1, 2))
 
 
 class ServerFaultTCN(nn.Module):

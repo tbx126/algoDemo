@@ -46,7 +46,7 @@ const caseTitle = (c: ServerFaultViz['cases'][number]) => (c.label === '正常' 
   <div class="space-y-5">
     <section v-if="showCases" class="card p-5">
       <h3 class="mb-1 text-sm font-semibold">典型样本：Ground Truth vs 算法预测</h3>
-      <p class="mb-3 text-xs text-gray-500">测试集中每类故障各取一个窗口，另取一个全程正常的窗口（数据集中有仅含前兆的窗口时也会列出）。浅红色背景为真值故障段，浅黄色背景为预警真值段（故障前 10 分钟）。</p>
+      <p class="mb-3 text-xs text-gray-500">测试集中每类故障各取一个窗口，另取一个全程正常的窗口（数据集中有仅含前兆的窗口时也会列出）。浅红色背景为真值故障段，橙色斜线与底部橙色条为算法预测的故障段（两者重叠即命中，只有斜线为误报，只有浅红为漏报），浅黄色背景为预警真值段（故障前 10 分钟）。</p>
       <div class="mb-4 flex flex-wrap gap-1.5" role="tablist" aria-label="选择样本">
         <button
           v-for="(c, i) in viz.cases"

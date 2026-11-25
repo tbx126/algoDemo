@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 服务器故障检测标准：单个 60 分钟窗口的折线图视图（所有标准算法 / 数据集共用）：
- *   1. 遥测曲线（利用率 / 温度 / 磁盘吞吐 / 网络吞吐），背景标出真值故障段
+ *   1. 遥测曲线（利用率 / 温度 / 磁盘吞吐 / 网络吞吐），背景标出预警真值段（浅黄）、真值故障段（浅红）与算法预测故障段（橙色斜线 + 底部色条）
  *   2. 运行状态：ground truth vs 算法预测（阶梯线）
  *   3. 故障概率与未来 10 分钟预警概率，背景标出真值故障段与预警真值段
  */
@@ -30,8 +30,10 @@ function runs(seq: number[] | null | undefined, kind: SfBand['kind'], label: str
   return out
 }
 const gtBands = computed(() => runs(props.c.gt, 'fault', '真值故障段'))
-const predBands = computed(() => (hasGt.value ? [] : runs(props.c.pred, 'pred', '预测故障段')))
-const bgBands = computed(() => [...gtBands.value, ...predBands.value])
+// 预测故障段用橙色斜线 + 底部色条绘制，与真值的浅红背景可叠加区分（重叠 = 命中，只有斜线 = 误报，只有浅红 = 漏报）
+const predBands = computed(() => runs(props.c.pred, 'pred', '预测故障段'))
+const warnBands = computed(() => runs(props.c.warnGt, 'warn', '预警真值段'))
+const bgBands = computed(() => [...warnBands.value, ...gtBands.value, ...predBands.value])
 
 const minute = (v: number) => `第 ${Math.round(v)} 分钟`
 const pct = (v: number) => `${Math.round(v)}%`
@@ -76,7 +78,7 @@ const scoreSeries = computed<SfSeries[]>(() => {
   if (props.c.warn) s.push({ key: 'wn', name: '10 分钟预警概率', values: props.c.warn.map((v) => v * 100), color: 'var(--v7-s7)' })
   return s
 })
-const scoreBands = computed(() => [...gtBands.value, ...runs(props.c.warnGt, 'warn', '预警真值段'), ...predBands.value])
+const scoreBands = bgBands
 
 const onsetMarker = computed(() => (props.c.onset !== undefined && props.c.onset >= 0 && props.c.onset < 60 ? [{ x: props.c.onset, label: '故障起点' }] : []))
 const firstPred = computed(() => (props.c.pred ? props.c.pred.findIndex((v) => v > 0) : -1))

@@ -6,7 +6,7 @@
  * - 悬停十字线 + 提示框；>= 2 个序列时显示图例
  * - 颜色取自 .sf-viz 上的 CSS 变量，亮 / 暗两套
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 
 export interface SfSeries {
   key: string
@@ -45,6 +45,7 @@ const props = withDefaults(
   { height: 170, legend: true, padLeft: 40 },
 )
 
+const hatchId = `sf-hatch-${useId()}`
 const root = ref<HTMLElement>()
 const width = ref(560)
 let ro: ResizeObserver | undefined
@@ -195,7 +196,16 @@ const tip = computed(() => {
     </div>
     <svg :viewBox="`0 0 ${width} ${height}`" :width="width" :height="height" class="block max-w-full overflow-visible" role="img" @mousemove="onMove" @mouseleave="hover = null">
       <!-- 背景区间 -->
-      <rect v-for="(b, i) in bandRects" :key="'b' + i" :x="b.x" :y="pad.t" :width="b.w" :height="plotH" :class="`band-${b.kind}`" />
+      <defs>
+        <pattern :id="hatchId" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="0" y2="6" class="sf-hatch" />
+        </pattern>
+      </defs>
+      <rect v-for="(b, i) in bandRects.filter((b) => b.kind !== 'pred')" :key="'b' + i" :x="b.x" :y="pad.t" :width="b.w" :height="plotH" :class="`band-${b.kind}`" />
+      <g v-for="(b, i) in bandRects.filter((b) => b.kind === 'pred')" :key="'p' + i">
+        <rect :x="b.x" :y="pad.t" :width="b.w" :height="plotH" :fill="`url(#${hatchId})`" />
+        <rect :x="b.x" :y="pad.t + plotH - 4" :width="b.w" height="4" class="sf-pred-strip" />
+      </g>
       <!-- 网格与 y 轴刻度 -->
       <g v-for="t in ticks" :key="'t' + t">
         <line :x1="pad.l" :x2="width - pad.r" :y1="sy(t)" :y2="sy(t)" class="sf-grid" />
@@ -259,7 +269,7 @@ const tip = computed(() => {
   --v7-axis: #8a8985;
   --v7-band-fault: rgba(227, 73, 72, 0.12);
   --v7-band-warn: rgba(237, 161, 0, 0.14);
-  --v7-band-pred: rgba(235, 104, 52, 0.1);
+  --v7-pred: #eb6834;
 }
 .dark .sf-viz,
 .dark .sf-viz-scope {
@@ -276,7 +286,7 @@ const tip = computed(() => {
   --v7-axis: #8f8e88;
   --v7-band-fault: rgba(230, 103, 103, 0.18);
   --v7-band-warn: rgba(201, 133, 0, 0.2);
-  --v7-band-pred: rgba(217, 89, 38, 0.16);
+  --v7-pred: #d95926;
 }
 .sf-viz .sf-grid {
   stroke: var(--v7-grid);
@@ -315,7 +325,15 @@ const tip = computed(() => {
   background: var(--v7-band-warn);
 }
 .sf-viz .band-pred {
-  fill: var(--v7-band-pred);
-  background: var(--v7-band-pred);
+  background: repeating-linear-gradient(-45deg, var(--v7-pred) 0 1.5px, transparent 1.5px 4px);
+  box-shadow: inset 0 -3px 0 var(--v7-pred);
+}
+.sf-viz .sf-hatch {
+  stroke: var(--v7-pred);
+  stroke-width: 1.5;
+  opacity: 0.45;
+}
+.sf-viz .sf-pred-strip {
+  fill: var(--v7-pred);
 }
 </style>
