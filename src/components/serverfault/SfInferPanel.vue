@@ -1,42 +1,60 @@
 <script setup lang="ts">
-/** [0x07] 在线推理面板：上传 60 分钟遥测 CSV 或按状态挑选数据集示例，结果以折线图展示 */
-import { computed, ref } from 'vue'
+/**
+ * 服务器故障检测标准：在线推理面板（所有标准算法共用）
+ * 上传标准 8 通道 CSV，或从任一标准数据集的训练集按状态挑选示例——任何标准算法都能直接推理任何标准数据集的样本。
+ */
+import { computed, onMounted, ref, watch } from 'vue'
 import { Download, FileUp, LoaderCircle, Play, RotateCcw, Shuffle } from 'lucide-vue-next'
 import type { Algorithm, InferenceResult } from '@/types'
 import { infer } from '@/api'
-import CaseView0x07 from './CaseView0x07.vue'
-import { DATASET_0X07_ID, STATES_0X07, type Case0x07, type Channel0x07 } from './types'
+import SfCaseView from './SfCaseView.vue'
+import { SF_STATES, type SfCase, type SfChannel } from './types'
 
 const props = defineProps<{ algo: Algorithm; version: string }>()
 
-const FILES = `/real-api/datasets/${DATASET_0X07_ID}/files/train`
+const datasets = ref<string[]>([])
+const dataset = ref('')
+const samples = ref<{ file: string; label: string; server: string; onset: number }[]>([])
+const labels = computed(() => SF_STATES.filter((s) => samples.value.some((x) => x.label === s)))
+const filesBase = computed(() => `/real-api/datasets/${dataset.value}/files/train`)
+
 const input = ref<{ file?: File; dataUrl?: string; fileName: string; size: number; label?: string } | null>(null)
 const result = ref<InferenceResult | null>(null)
 const running = ref(false)
 const error = ref('')
 const fileEl = ref<HTMLInputElement>()
-const sampleCache = new Map<string, { file: string; label: string }[]>()
 const cursor = new Map<string, number>()
 
-async function pickSample(label: string) {
-  error.value = ''
+onMounted(async () => {
   try {
-    if (!sampleCache.has(label)) {
-      const r = await fetch(`/real-api/0x07/samples?label=${encodeURIComponent(label)}&limit=40`)
-      if (!r.ok) throw new Error('示例列表获取失败（后端未启动？）')
-      sampleCache.set(label, await r.json())
-    }
-    const list = sampleCache.get(label)!
-    if (!list.length) throw new Error('没有该状态的示例')
-    const i = (cursor.get(label) ?? -1) + 1
-    cursor.set(label, i)
-    const s = list[i % list.length]
-    input.value = { dataUrl: `${FILES}/${s.file}`, fileName: s.file, size: 0, label }
-    result.value = null
-    await run()
-  } catch (e) {
-    error.value = (e as Error).message
+    const r = await fetch('/real-api/server-fault/standard')
+    if (!r.ok) throw new Error()
+    const ids: string[] = (await r.json()).datasets
+    // 算法自己的训练数据集排在最前面
+    const key = props.algo.name.toLowerCase()
+    datasets.value = [...ids].sort((a, b) => Number(b.toLowerCase().includes(key)) - Number(a.toLowerCase().includes(key)))
+    dataset.value = datasets.value[0] ?? ''
+  } catch {
+    error.value = '无法获取标准数据集列表（后端未启动？），仍可上传 CSV 推理'
   }
+})
+watch(dataset, async (id) => {
+  samples.value = []
+  cursor.clear()
+  if (!id) return
+  const r = await fetch(`/real-api/server-fault/samples?dataset=${encodeURIComponent(id)}&limit=5000`)
+  if (r.ok) samples.value = await r.json()
+})
+
+async function pickSample(label: string) {
+  const list = samples.value.filter((s) => s.label === label)
+  if (!list.length) return
+  const i = (cursor.get(label) ?? -1) + 1
+  cursor.set(label, i)
+  const s = list[i % list.length]
+  input.value = { dataUrl: `${filesBase.value}/${s.file}`, fileName: s.file, size: 0, label }
+  result.value = null
+  await run()
 }
 
 function onFile(f?: File | null) {
@@ -69,22 +87,25 @@ function reset() {
   error.value = ''
 }
 
-type Raw0x07 = {
+/** 标准推理输出（server_fault_api._infer） */
+type SfRaw = {
   status: string
-  risk_next_10min: number
-  max_anomaly: number
+  diagnosis: string | null
+  risk_next_10min: number | null
+  max_fault_prob: number
   first_fault_minute: number | null
   source_file: string
+  dataset: string | null
   states: string[]
-  channels: Record<Channel0x07, number[]>
-  pred: number[]
-  anomaly: number[]
-  warn: number[]
+  channels: Record<SfChannel, number[]>
+  fault_prob: number[]
+  state: number[] | null
+  warn_prob: number[] | null
   gt: number[] | null
   warnGt: number[] | null
 }
-const raw = computed(() => (result.value?.raw && 'channels' in (result.value.raw as object) ? (result.value.raw as unknown as Raw0x07) : null))
-const caseData = computed<Case0x07 | null>(() => {
+const raw = computed(() => (result.value?.raw && 'fault_prob' in (result.value.raw as object) ? (result.value.raw as unknown as SfRaw) : null))
+const caseData = computed<SfCase | null>(() => {
   const r = raw.value
   if (!r) return null
   const onset = r.gt ? r.gt.findIndex((v) => v > 0) : -1
@@ -96,11 +117,12 @@ const caseData = computed<Case0x07 | null>(() => {
     channels: r.channels,
     gt: r.gt,
     warnGt: r.warnGt,
-    pred: r.pred,
-    anomaly: r.anomaly,
-    warn: r.warn,
+    pred: r.state,
+    anomaly: r.fault_prob,
+    warn: r.warn_prob,
   }
 })
+const ongoing = computed(() => (raw.value ? raw.value.fault_prob[raw.value.fault_prob.length - 1] >= 0.5 : false))
 const statusCls = computed(() =>
   raw.value?.status === '正常'
     ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
@@ -121,17 +143,23 @@ const statusCls = computed(() =>
         @drop.prevent="onFile($event.dataTransfer?.files?.[0])"
       >
         <FileUp class="size-6 text-gray-400" />
-        <span class="text-gray-600 dark:text-gray-300">上传 60 分钟遥测 CSV</span>
+        <span class="text-gray-600 dark:text-gray-300">上传 60 分钟标准遥测 CSV</span>
         <span class="text-[11px] text-gray-400">8 列：cpu_pct、cpu_temp_c、mem_pct、gpu_pct、gpu_temp_c、gpu_mem_pct、disk_io_mbps、net_mbps</span>
       </div>
       <input ref="fileEl" type="file" class="hidden" accept=".csv,text/csv" @change="onFile(($event.target as HTMLInputElement).files?.[0])" />
-      <div>
-        <p class="mb-1.5 flex items-center gap-1 text-xs text-gray-500"><Shuffle class="size-3.5" />或按状态取一个训练集示例（再次点击换一个）</p>
+      <div v-if="datasets.length">
+        <div class="mb-1.5 flex items-center gap-2 text-xs text-gray-500">
+          <Shuffle class="size-3.5 shrink-0" />
+          <span class="shrink-0">或从标准数据集训练集取示例</span>
+          <select v-model="dataset" class="input min-w-0 flex-1 py-0.5 text-xs" aria-label="选择示例数据集">
+            <option v-for="d in datasets" :key="d" :value="d">{{ d.split('/')[1] }}</option>
+          </select>
+        </div>
         <div class="flex flex-wrap gap-1.5">
-          <button v-for="s in STATES_0X07" :key="s" type="button" class="btn-default px-2 py-1 text-xs" @click="pickSample(s)">{{ s }}</button>
+          <button v-for="s in labels" :key="s" type="button" class="btn-default px-2 py-1 text-xs" @click="pickSample(s)">{{ s }}</button>
         </div>
       </div>
-      <a :href="`${FILES}/train_0x07_gpu-node-01_0001.csv`" download="0x07_template.csv" class="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline dark:text-brand-400"><Download class="size-3.5" />下载 CSV 格式示例</a>
+      <a v-if="samples.length" :href="`${filesBase}/${samples[0].file}`" download="server_fault_template.csv" class="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline dark:text-brand-400"><Download class="size-3.5" />下载标准 CSV 示例</a>
     </template>
 
     <template v-else>
@@ -157,6 +185,7 @@ const statusCls = computed(() =>
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
         <span>{{ result.device }}</span>
         <span>推理 {{ result.latencyMs }} ms</span>
+        <span v-if="raw.dataset" class="mono">{{ raw.dataset }}</span>
       </div>
       <div class="grid grid-cols-3 gap-2 text-center">
         <div class="rounded-lg border px-2 py-2" :class="statusCls">
@@ -164,15 +193,16 @@ const statusCls = computed(() =>
           <div class="text-sm font-semibold">{{ raw.status }}</div>
         </div>
         <div class="rounded-lg border border-gray-200 px-2 py-2 dark:border-gray-700">
-          <div class="text-[10px] text-gray-500">未来 10 分钟风险</div>
-          <div class="text-sm font-semibold">{{ raw.pred[raw.pred.length - 1] > 0 ? '故障进行中' : `${raw.risk_next_10min}%` }}</div>
+          <div class="text-[10px] text-gray-500">{{ raw.risk_next_10min === null ? '最大故障概率' : '未来 10 分钟风险' }}</div>
+          <div class="text-sm font-semibold">{{ raw.risk_next_10min === null ? `${raw.max_fault_prob}%` : ongoing ? '故障进行中' : `${raw.risk_next_10min}%` }}</div>
         </div>
         <div class="rounded-lg border border-gray-200 px-2 py-2 dark:border-gray-700">
           <div class="text-[10px] text-gray-500">首次判定故障</div>
           <div class="text-sm font-semibold">{{ raw.first_fault_minute === null ? '—' : `第 ${raw.first_fault_minute} 分钟` }}</div>
         </div>
       </div>
-      <CaseView0x07 :c="caseData" :states="raw.states" narrow />
+      <p v-if="raw.diagnosis" class="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-700 dark:bg-gray-800/60 dark:text-gray-300">{{ raw.diagnosis }}</p>
+      <SfCaseView :c="caseData" :states="raw.states" narrow />
     </template>
   </div>
 </template>

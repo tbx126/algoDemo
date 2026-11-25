@@ -1,8 +1,9 @@
 """
 构建服务器运行故障时序检测数据集（Admin/0x6E-server-telemetry）：
   - 优先尝试拉取公开 SMD (Server Machine Dataset, NetManAIOps/OmniAnomaly) 真实服务器遥测与异常真值作为真实基线序列；
-  - 结合 GPU 推理集群典型硬件通道，构建 6 维核心服务器状态时序（每条样本为 60 分钟步长窗口）：
-      step, cpu_pct, gpu_util_pct, gpu_mem_pct, mem_pct, disk_io_mbps, gpu_temp_c, gt_fault
+  - 结合 GPU 推理集群典型硬件通道，按平台「服务器故障检测标准」（server_fault_std）输出 8 通道 60 分钟窗口：
+      minute, cpu_pct, cpu_temp_c, mem_pct, gpu_pct, gpu_temp_c, gpu_mem_pct, disk_io_mbps, net_mbps
+  - labels.csv 为标准表头 file_name,label,server,role,onset_min,state_seq,warn_seq（逐分钟标准状态码）
   - 覆盖 4 类真实运行状态标签：
       正常 (normal)、CPU过载 (cpu_overload)、显存泄漏 (gpu_oom_leak)、内存IO雪崩 (mem_io_storm)
   - 训练集（800 条 60-step 窗口 = 48,000 步）与测试集（200 条独立时间段窗口 = 12,000 步）严格隔离无泄露
@@ -14,14 +15,12 @@
 """
 from __future__ import annotations
 
-import csv
-import hashlib
-import json
 import math
 import random
 import urllib.request
-import zipfile
 from pathlib import Path
+
+import server_fault_std as std
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data" / "0x6e-server-telemetry"
@@ -39,14 +38,7 @@ FAULT_CLASSES = [
 ]
 
 NODES = ["node-gpu-01", "node-gpu-02", "node-infer-03", "node-train-04"]
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return "sha256:" + h.hexdigest()[:16]
+NODE_ROLE = {"node-gpu-01": "GPU 推理节点", "node-gpu-02": "GPU 推理节点", "node-infer-03": "GPU 推理节点", "node-train-04": "GPU 训练节点"}
 
 
 def _try_fetch_smd_real_trace(max_rows: int = 8000) -> tuple[list[list[float]], list[int]] | None:
@@ -88,14 +80,17 @@ def _build_window_from_smd(smd_x: list[list[float]], smd_y: list[int], start: in
         gpu_u = min(99.5, max(5.0, (v[1] * 65.0 + v[14] * 35.0) + 18.0 + (24.0 if gt else 0.0) + rng.gauss(0, 1.8)))
         gpu_m = min(99.0, max(12.0, (v[9] * 55.0 + 28.0) + (20.0 if gt else 0.0) + rng.gauss(0, 1.1)))
         gpu_t = min(96.0, max(34.0, 38.0 + 0.36 * gpu_u + 0.14 * gpu_m + (9.0 if gt else 0.0) + rng.gauss(0, 0.7)))
+        cpu_t = min(98.0, max(32.0, 38.0 + 0.42 * cpu + rng.gauss(0, 0.9)))
+        net = min(1000.0, max(5.0, v[14] * 700.0 + 120.0 + rng.gauss(0, 12.0)))  # SMD col 14 = Net
         rows.append({
-            "step": t,
-            "cpu_pct": round(cpu, 2),
-            "gpu_util_pct": round(gpu_u, 2),
-            "gpu_mem_pct": round(gpu_m, 2),
-            "mem_pct": round(mem, 2),
-            "disk_io_mbps": round(disk, 2),
-            "gpu_temp_c": round(gpu_t, 2),
+            "cpu_pct": cpu,
+            "cpu_temp_c": cpu_t,
+            "mem_pct": mem,
+            "gpu_pct": gpu_u,
+            "gpu_temp_c": gpu_t,
+            "gpu_mem_pct": gpu_m,
+            "disk_io_mbps": disk,
+            "net_mbps": net,
             "gt_fault": gt,
         })
     if fault_steps == 0:
@@ -121,6 +116,7 @@ def _simulate_server_window(fault_code: str, seed: int) -> tuple[list[dict], str
     base_gmem = rng.uniform(30.0, 54.0)
     base_mem = rng.uniform(36.0, 58.0)
     base_disk = rng.uniform(35.0, 110.0)
+    base_net = rng.uniform(150.0, 420.0)
 
     # 故障起止步长（每条故障样本在窗口中段或后段出现清晰故障区间）
     f_start = rng.randint(14, 34)
@@ -139,6 +135,7 @@ def _simulate_server_window(fault_code: str, seed: int) -> tuple[list[dict], str
         gpu_m = base_gmem + 3.0 * wave + rng.gauss(0, 1.4)
         mem = base_mem + 2.5 * wave + rng.gauss(0, 1.2)
         disk = base_disk + 18.0 * abs(wave) + rng.gauss(0, 8.5)
+        net = base_net * (1 + 0.1 * wave) + rng.gauss(0, 14.0)
         gt = 0
 
         if fault_code == "cpu_overload":
@@ -196,15 +193,18 @@ def _simulate_server_window(fault_code: str, seed: int) -> tuple[list[dict], str
         mem = min(99.5, max(12.0, mem))
         disk = min(980.0, max(8.0, disk))
         gpu_t = min(97.0, max(32.0, 36.0 + 0.38 * gpu_u + 0.16 * gpu_m + (7.5 if (gt and fault_code == "gpu_oom_leak") else 0.0) + rng.gauss(0, 0.8)))
+        cpu_t = min(98.0, max(30.0, 38.0 + 0.42 * cpu + rng.gauss(0, 0.9)))
+        net = min(1000.0, max(5.0, net))
 
         rows.append({
-            "step": t,
-            "cpu_pct": round(cpu, 2),
-            "gpu_util_pct": round(gpu_u, 2),
-            "gpu_mem_pct": round(gpu_m, 2),
-            "mem_pct": round(mem, 2),
-            "disk_io_mbps": round(disk, 2),
-            "gpu_temp_c": round(gpu_t, 2),
+            "cpu_pct": cpu,
+            "cpu_temp_c": cpu_t,
+            "mem_pct": mem,
+            "gpu_pct": gpu_u,
+            "gpu_temp_c": gpu_t,
+            "gpu_mem_pct": gpu_m,
+            "disk_io_mbps": disk,
+            "net_mbps": net,
             "gt_fault": gt,
         })
 
@@ -212,45 +212,50 @@ def _simulate_server_window(fault_code: str, seed: int) -> tuple[list[dict], str
     return rows, label_map[fault_code]
 
 
-def _pack_split_zip(split: str) -> tuple[Path, int, str]:
-    split_dir = DATA_DIR / split
-    zip_path = DATA_DIR / f"0x6e-server-telemetry-{split}-v1.0.zip"
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.write(split_dir / "labels.csv", arcname=f"{split}/labels.csv")
-        for f in sorted((split_dir / "series").glob("*.csv")):
-            zf.write(f, arcname=f"{split}/series/{f.name}")
-    return zip_path, zip_path.stat().st_size, _sha256_file(zip_path)
+README = """# 0x6E-server-telemetry（服务器多维时序故障检测数据集 · 0x6E）
+
+符合平台**服务器故障检测标准**（task = `server-fault`）的多变量时序数据集，面向 GPU 推理 / 训练集群的运行状态监控与故障检测。{smd_note}所有符合该标准的算法都可以直接在本数据集上评测。
+
+## 数据组成
+
+| 部分 | 窗口数 | 总时间步 | 说明 |
+| --- | --- | --- | --- |
+| 训练集 | {train} | {train_steps} | 60 分钟多维遥测滑窗，所有账号可下载 |
+| 测试集 | {test} | {test_steps} | 独立时段验证窗口，仅管理员可查看下载 |
+
+## 本数据集出现的状态（标准状态码）
+
+| 编码 | 状态 |
+| --- | --- |
+| 0 | 正常 |
+| 1 | CPU过载 |
+| 6 | 显存泄漏 |
+| 7 | 内存IO雪崩 |
+
+## 文件格式（服务器故障检测标准）
+
+`series/*.csv`：60 行，表头固定为
+
+```
+minute,cpu_pct,cpu_temp_c,mem_pct,gpu_pct,gpu_temp_c,gpu_mem_pct,disk_io_mbps,net_mbps
+```
+
+`labels.csv`：表头固定为 `file_name,label,server,role,onset_min,state_seq,warn_seq`。`state_seq` 为 60 个逐分钟标准状态码；`warn_seq` 为逐分钟 10 分钟预警真值，由 `state_seq` 推出（窗口结束之后的故障未知，按正常处理）。
+"""
 
 
 def build_dataset() -> dict:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    for split in ("train", "test"):
-        (DATA_DIR / split / "series").mkdir(parents=True, exist_ok=True)
-
     smd = _try_fetch_smd_real_trace()
     smd_used = smd is not None
     print(f"[0x6E] 公开 SMD 真实服务器遥测拉取：{'成功 (' + str(len(smd[0])) + ' 步)' if smd_used else '未连通，使用物理仿真遥测引擎'}")
 
-    split_specs = [("train", 800, 600001), ("test", 200, 900001)]
-    meta: dict = {
-        "id": "Admin/0x6E-server-telemetry",
-        "name": "0x6E-server-telemetry",
-        "task": "power-forecast",
-        "window_len": WINDOW_LEN,
-        "smd_backed": smd_used,
-        "classes": [zh for _, zh in FAULT_CLASSES],
-        "columns": ["file_name", "value", "fault_type", "node"],
-    }
-
-    for split, count, base_seed in split_specs:
+    split_records: dict[str, list[dict]] = {}
+    for split, count, base_seed in (("train", 800, 600001), ("test", 200, 900001)):
         rng = random.Random(base_seed)
-        records: list[dict] = []
-        class_counts: dict[str, int] = {}
-
         # 均衡分布：40% 正常，其余 60% 均分为 3 类典型服务器故障
         fault_pool = ["normal"] * int(count * 0.40) + ["cpu_overload"] * int(count * 0.20) + ["gpu_oom_leak"] * int(count * 0.20) + ["mem_io_storm"] * (count - int(count * 0.80))
         rng.shuffle(fault_pool)
-
+        records: list[dict] = []
         for idx in range(count):
             # 若成功拉取 SMD，前 25% 窗口直接取材真实 SMD 遥测切片，其余覆盖全量 GPU/CPU 故障类型
             if smd_used and smd is not None and idx < count // 4:
@@ -262,46 +267,33 @@ def build_dataset() -> dict:
                 rows, label = _build_window_from_smd(smd_x, smd_y, start, rng)
             else:
                 rows, label = _simulate_server_window(fault_pool[idx], base_seed + idx * 37)
-
+            code = std.STATE_CODE[label]
+            states = [code if r["gt_fault"] else 0 for r in rows]
             node = NODES[idx % len(NODES)]
             fname = f"{split}_0x6e_{idx + 1:04d}.csv"
-            rel = f"series/{fname}"
-            csv_path = DATA_DIR / split / rel
-            with csv_path.open("w", encoding="utf-8", newline="") as f:
-                w = csv.writer(f)
-                w.writerow(["step", "cpu_pct", "gpu_util_pct", "gpu_mem_pct", "mem_pct", "disk_io_mbps", "gpu_temp_c", "gt_fault"])
-                for r in rows:
-                    w.writerow([r["step"], r["cpu_pct"], r["gpu_util_pct"], r["gpu_mem_pct"], r["mem_pct"], r["disk_io_mbps"], r["gpu_temp_c"], r["gt_fault"]])
+            std.write_series_csv(DATA_DIR / split / "series" / fname, rows)
+            records.append(std.make_label_record(f"series/{fname}", node, NODE_ROLE[node], states, std.derive_warn(states + [0] * std.WARN_HORIZON)))
+        std.write_labels(DATA_DIR / split / "labels.csv", records)
+        split_records[split] = records
 
-            gt_seq = [r["gt_fault"] for r in rows]
-            fault_ratio = round(sum(gt_seq) / len(gt_seq) * 100.0, 2)
-            records.append({
-                "file_name": rel,
-                "value": f"{fault_ratio:.2f}",
-                "fault_type": label,
-                "node": node,
-                "gt_seq": json.dumps(gt_seq),
-            })
-            class_counts[label] = class_counts.get(label, 0) + 1
-
-        lbl_path = DATA_DIR / split / "labels.csv"
-        with lbl_path.open("w", encoding="utf-8", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["file_name", "value", "fault_type", "node", "gt_seq"])
-            for rec in records:
-                w.writerow([rec["file_name"], rec["value"], rec["fault_type"], rec["node"], rec["gt_seq"]])
-
-        _, zsize, sha = _pack_split_zip(split)
-        meta[split] = {
-            "files": len(records),
-            "rows": len(records),
-            "sizeBytes": zsize,
-            "contentHash": sha,
-            "classCounts": class_counts,
-        }
-
-    (DATA_DIR / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[0x6E] 已生成 Admin/0x6E-server-telemetry：train={meta['train']['files']} 条，test={meta['test']['files']} 条 | 类别分布={meta['test']['classCounts']}")
+    meta = std.write_meta(
+        DATA_DIR,
+        {
+            "id": "Admin/0x6E-server-telemetry",
+            "name": "0x6E-server-telemetry",
+            "displayName": "服务器多维时序故障检测数据集（0x6E）",
+            "summary": "融合公开 SMD 服务器遥测与 GPU 集群硬件通道的 60 分钟 × 8 通道故障检测时序数据集（标准 server-fault 格式，含逐分钟 Ground Truth）。",
+            "tags": ["0x6E", "时序故障检测", "服务器监控"],
+            "smd_backed": smd_used,
+            "createdAt": "2026-11-25T00:57:00+08:00",
+            "benchmark": {"id": "0x6E-server-fault-bench", "displayName": "服务器运行故障时序检测评测基准（0x6E）"},
+        },
+        split_records,
+    )
+    smd_note = "其中约 25% 的窗口取材于公开 **SMD (Server Machine Dataset)** 真实服务器遥测，其余由物理与运维规律仿真生成。" if smd_used else "全部窗口由物理与运维规律仿真生成（构建时未能拉取公开 SMD 数据）。"
+    tr, te = meta["train"]["files"], meta["test"]["files"]
+    (DATA_DIR / "README.md").write_text(README.format(smd_note=smd_note, train=f"{tr:,}", test=f"{te:,}", train_steps=f"{tr * 60:,}", test_steps=f"{te * 60:,}"), encoding="utf-8")
+    print(f"[0x6E] 已生成 Admin/0x6E-server-telemetry：train={tr} 条，test={te} 条 | 类别分布={meta['test']['classCounts']}")
     return meta
 
 

@@ -15,7 +15,7 @@ const icon = computed(
       'keypoint-detection': Bone,
       ocr: ScanText,
       'power-forecast': Zap,
-      'server-fault-0x07': ServerCrash,
+      'server-fault': ServerCrash,
       'signal-processing': AudioWaveform,
       optimization: Route,
       custom: Puzzle,

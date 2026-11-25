@@ -227,20 +227,20 @@ const REAL_DEHAZE_IDS = new Set(['Admin/dehaze-dcp', 'Admin/dehaze-aodnet', 'Adm
 const REAL_POWER_ALGO_ID = 'Admin/power-dlinear'
 const REAL_0X6E_ALGO_ID = 'Admin/0x6E'
 const REAL_RANDOM_ID = 'Admin/random'
-const REAL_0X07_ALGO_ID = 'Admin/0x07' // [0x07] 服务器运行故障检测
+const REAL_0X07_ALGO_ID = 'Admin/0x07' // 服务器故障检测标准算法
 const REAL_ALGO_IDS = new Set([REAL_ALGO_ID, ...REAL_DEHAZE_IDS, REAL_POWER_ALGO_ID, REAL_0X6E_ALGO_ID, REAL_0X07_ALGO_ID, REAL_RANDOM_ID])
 const LEGACY_REAL_ALGO_IDS = new Set(['Admin/dehaze'])
 const REAL_DS_ID = 'Admin/cat-dog-dataset'
 const REAL_DEHAZE_DS_ID = 'Admin/dehaze-dataset'
 const REAL_OCR_DS_ID = 'Admin/sroie-ocr-dataset'
 const REAL_POWER_DS_ID = 'Admin/wind-solar-power-dataset'
-const REAL_0X07_DS_ID = 'Admin/0x07-server-telemetry-dataset' // [0x07]
+const REAL_0X07_DS_ID = 'Admin/0x07-server-telemetry-dataset' // 服务器故障检测标准数据集
 const REAL_0X6E_DS_ID = 'Admin/0x6E-server-telemetry'
 export const REAL_DS_IDS = new Set([REAL_DS_ID, REAL_DEHAZE_DS_ID, REAL_OCR_DS_ID, REAL_POWER_DS_ID, REAL_0X6E_DS_ID, REAL_0X07_DS_ID])
 const REAL_BENCH_ID = 'cat-dog-cls-bench'
 const REAL_DEHAZE_BENCH_ID = 'dehaze-bench'
 const REAL_POWER_BENCH_ID = 'power-forecast-bench'
-const REAL_0X07_BENCH_ID = '0x07-server-fault-bench' // [0x07]
+const REAL_0X07_BENCH_ID = '0x07-server-fault-bench' // 服务器故障检测标准基准
 const REAL_0X6E_BENCH_ID = '0x6E-server-fault-bench'
 const REAL_BENCH_IDS = new Set([REAL_BENCH_ID, REAL_DEHAZE_BENCH_ID, REAL_POWER_BENCH_ID, REAL_0X6E_BENCH_ID, REAL_0X07_BENCH_ID])
 
@@ -272,15 +272,17 @@ function applyRealBootstrap(payload: {
     const ai = db.algorithms.findIndex((a) => a.id === algo.id)
     if (ai >= 0) {
       const prev = db.algorithms[ai]
+      // 服务器故障检测标准算法：任务类型与卡片（含跨数据集标准评测结果表）以后端为准，旧缓存不能覆盖
+      const isStd = algo.task === 'server-fault'
       const merged: Algorithm = {
         ...algo,
-        task: prev.task || algo.task,
+        task: isStd ? algo.task : prev.task || algo.task,
         business: prev.business || algo.business,
         framework: prev.framework || algo.framework,
         selfDeveloped: prev.selfDeveloped ?? algo.selfDeveloped ?? DEFAULT_SELF_DEVELOPED_IDS.has(algo.id),
         tags: algo.tags.length ? algo.tags : prev.tags,
-        summary: prev.summary || algo.summary,
-        readme: prev.readme || algo.readme,
+        summary: isStd ? algo.summary : prev.summary || algo.summary,
+        readme: isStd ? algo.readme : prev.readme || algo.readme,
       }
       merged.algoYaml = syncAlgoYaml(merged)
       db.algorithms[ai] = merged
@@ -846,7 +848,7 @@ export async function listEvals(f: { algorithmId?: string; benchmarkId?: string;
 }
 
 export async function getEval(id: string): Promise<EvalRun> {
-  if (id.startsWith('ev-real-') || id.startsWith('ev-dehaze-') || id.startsWith('ev-custom-') || id.startsWith('ev-power-') || id.startsWith('ev-0x6e-') || id.startsWith('ev-0x07-')) {
+  if (id.startsWith('ev-real-') || id.startsWith('ev-dehaze-') || id.startsWith('ev-custom-') || id.startsWith('ev-power-') || id.startsWith('ev-sf-')) {
     await syncRealBackend(!realBackendAvailable)
     if (realBackendAvailable) {
       const resp = await fetch(`/real-api/evals/${encodeURIComponent(id)}`)

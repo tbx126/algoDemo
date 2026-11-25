@@ -35,8 +35,8 @@ export function labelSpec(task: TaskType): LabelSpec {
       return { required: ['file_name', 'mask_file'], optional: CONDITION_COLUMNS, perObject: false, desc: '一张图一行，mask_file 指向 masks/ 下的 PNG（像素值为类别序号）', dataExt: 'jpg' }
     case 'power-forecast':
       return { required: ['file_name', 'value'], optional: ['station', 'weather'], perObject: false, desc: '一个时序文件一行，value 为目标功率值', dataExt: 'csv' }
-    case 'server-fault-0x07':
-      return { required: ['file_name', 'label', 'state_seq'], optional: ['server', 'role', 'onset_min', 'warn_seq'], perObject: false, desc: '一个 60 分钟遥测 CSV 一行，state_seq 为逐分钟状态编码（JSON 数组）', dataExt: 'csv' }
+    case 'server-fault':
+      return { required: ['file_name', 'label', 'server', 'role', 'onset_min', 'state_seq', 'warn_seq'], optional: [], perObject: false, desc: '服务器故障检测标准：一个 60 分钟 × 8 通道遥测 CSV 一行，state_seq 为逐分钟标准状态码（JSON 数组）', dataExt: 'csv' }
     case 'signal-processing':
       return { required: ['file_name', 'label'], optional: ['device', 'speed_rpm'], perObject: false, desc: '一个信号文件一行', dataExt: 'csv' }
     case 'optimization':

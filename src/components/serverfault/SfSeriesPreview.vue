@@ -1,11 +1,11 @@
 <script setup lang="ts">
-/** [0x07] 数据集页：遥测窗口折线图预览（8 通道曲线 + 逐分钟 Ground Truth） */
+/** 服务器故障检测标准：数据集页遥测窗口折线图预览（8 通道曲线 + 逐分钟 Ground Truth），所有标准数据集共用 */
 import { computed, ref, watch } from 'vue'
 import { LoaderCircle } from 'lucide-vue-next'
-import CaseView0x07 from './CaseView0x07.vue'
-import { DATASET_0X07_ID, type Case0x07 } from './types'
+import SfCaseView from './SfCaseView.vue'
+import type { SfCase } from './types'
 
-const props = withDefaults(defineProps<{ rows: { file_name: string; label: string; row?: string[] }[]; part: 'train' | 'test'; max?: number }>(), { max: 24 })
+const props = withDefaults(defineProps<{ datasetId: string; rows: { file_name: string; label: string; row?: string[] }[]; part: 'train' | 'test'; max?: number }>(), { max: 24 })
 
 const items = computed(() =>
   props.rows.slice(0, props.max).map((r) => ({
@@ -16,7 +16,7 @@ const items = computed(() =>
   })),
 )
 const current = ref('')
-const data = ref<Case0x07 | null>(null)
+const data = ref<SfCase | null>(null)
 const loading = ref(false)
 const error = ref('')
 
@@ -34,7 +34,7 @@ watch(
     loading.value = true
     error.value = ''
     try {
-      const r = await fetch(`/real-api/datasets/${DATASET_0X07_ID}/series/${part}/${encodeURIComponent(file)}`)
+      const r = await fetch(`/real-api/datasets/${props.datasetId}/series/${part}/${encodeURIComponent(file)}`)
       if (!r.ok) throw new Error('样本读取失败（后端未启动？）')
       data.value = await r.json()
     } catch (e) {
@@ -65,7 +65,7 @@ const chipCls = (state: string, active: boolean) =>
     <p v-else-if="error" class="rounded-md bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">{{ error }}</p>
     <div v-else-if="data" :class="{ 'opacity-60': loading }">
       <p class="mono mb-2 text-[11px] text-gray-500">series/{{ data.file }}</p>
-      <CaseView0x07 :c="data" />
+      <SfCaseView :c="data" />
     </div>
   </div>
 </template>

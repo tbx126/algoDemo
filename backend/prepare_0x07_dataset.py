@@ -17,21 +17,18 @@
 """
 from __future__ import annotations
 
-import csv
-import hashlib
-import json
 import math
 import random
-import zipfile
 from pathlib import Path
+
+import server_fault_std as std
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data" / "0x07-server-telemetry-dataset"
 
 WINDOW = 60
 WARN_HORIZON = 10
-COLUMNS = ["minute", "cpu_pct", "cpu_temp_c", "mem_pct", "gpu_pct", "gpu_temp_c", "gpu_mem_pct", "disk_io_mbps", "net_mbps"]
-STATES = ["正常", "CPU过载", "内存泄漏", "GPU过热", "磁盘IO饱和", "网络异常"]
+COLUMNS = std.SERIES_COLUMNS  # 服务器故障检测标准
 
 SERVERS = [
     {"id": "gpu-node-01", "role": "GPU 训练节点", "gpu": True, "cpu": 55, "mem": 62, "disk": 120, "net": 380},
@@ -47,14 +44,6 @@ SERVERS = [
 
 def _clip(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return "sha256:" + h.hexdigest()[:16]
 
 
 def _simulate_window(rng: random.Random, srv: dict, fault: int, onset: int, duration: int, precursor: int) -> tuple[list[dict], list[int], list[int]]:
@@ -174,12 +163,9 @@ def _simulate_window(rng: random.Random, srv: dict, fault: int, onset: int, dura
     return rows[:WINDOW], states[:WINDOW], warn
 
 
-def _make_split(split: str, count: int, seed: int) -> tuple[list[dict], dict[str, int]]:
+def _make_split(split: str, count: int, seed: int) -> list[dict]:
     rng = random.Random(seed)
-    series_dir = DATA_DIR / split / "series"
-    series_dir.mkdir(parents=True, exist_ok=True)
     records: list[dict] = []
-    counts: dict[str, int] = {}
     for i in range(count):
         srv = SERVERS[i % len(SERVERS)]
         # 35% 正常窗口；其余注入一种故障（GPU 过热仅在 GPU 节点上发生）
@@ -196,66 +182,74 @@ def _make_split(split: str, count: int, seed: int) -> tuple[list[dict], dict[str
         else:
             onset, duration, precursor = -1, 0, 1
         rows, states, warn = _simulate_window(rng, srv, fault, onset, duration, precursor)
-        label = STATES[max(states)] if any(states) else STATES[0]
         fname = f"{split}_0x07_{srv['id']}_{i + 1:04d}.csv"
-        with (series_dir / fname).open("w", encoding="utf-8", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=COLUMNS)
-            w.writeheader()
-            w.writerows(rows)
-        records.append({
-            "file_name": f"series/{fname}",
-            "label": label,
-            "server": srv["id"],
-            "role": srv["role"],
-            "onset_min": onset if fault else -1,
-            "state_seq": json.dumps(states, separators=(",", ":")),
-            "warn_seq": json.dumps(warn, separators=(",", ":")),
-        })
-        counts[label] = counts.get(label, 0) + 1
-    with (DATA_DIR / split / "labels.csv").open("w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["file_name", "label", "server", "role", "onset_min", "state_seq", "warn_seq"])
-        w.writeheader()
-        w.writerows(records)
-    return records, counts
+        std.write_series_csv(DATA_DIR / split / "series" / fname, rows)
+        records.append(std.make_label_record(f"series/{fname}", srv["id"], srv["role"], states, warn, onset=onset if fault else None))
+    std.write_labels(DATA_DIR / split / "labels.csv", records)
+    return records
 
 
-def _pack_zip(split: str) -> tuple[int, str]:
-    split_dir = DATA_DIR / split
-    zip_path = DATA_DIR / f"0x07-server-telemetry-dataset-{split}-v1.0.zip"
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.write(split_dir / "labels.csv", arcname=f"{split}/labels.csv")
-        for f in sorted((split_dir / "series").glob("*.csv")):
-            zf.write(f, arcname=f"{split}/series/{f.name}")
-    return zip_path.stat().st_size, _sha256_file(zip_path)
+README = """# 0x07-server-telemetry-dataset（服务器运行遥测故障检测数据集 · 0x07）
+
+符合平台**服务器故障检测标准**（task = `server-fault`）的多变量时序数据集：8 台机房服务器（GPU 训练节点 ×3、Web 节点 ×2、数据库节点 ×2、缓存节点 ×1）的逐分钟运行遥测，每条样本为 **60 分钟 × 8 通道** 窗口，并带有**逐分钟**运行状态真值。所有符合该标准的算法都可以直接在本数据集上评测。
+
+## 数据组成
+
+| 部分 | 窗口数 | 说明 |
+| --- | --- | --- |
+| 训练集 | {train} | 所有账号可查看、下载 |
+| 测试集 | {test} | 独立随机种子与时段生成，仅管理员可查看、下载 |
+
+## 本数据集出现的状态（标准状态码）
+
+| 编码 | 状态 | 典型形态 |
+| --- | --- | --- |
+| 0 | 正常 | 日内业务周期 + 良性尖峰（批处理、备份、发版流量） |
+| 1 | CPU过载 | 失控进程使 CPU 利用率逐步逼近 100%，CPU 温度同步升高 |
+| 2 | 内存泄漏 | 内存占用缓慢线性爬升，进入故障后触发交换、磁盘 IO 抬升 |
+| 3 | GPU过热 | GPU 温度升至 85–94 ℃，随后降频，利用率呈锯齿状下跌（仅 GPU 节点） |
+| 4 | 磁盘IO饱和 | 磁盘吞吐打满约 480 MB/s，CPU iowait 抬升、网络吞吐下降 |
+| 5 | 网络异常 | 链路中断、广播风暴或丢包重传 |
+
+故障发生前 6–12 分钟通常有可观测的**前兆漂移**（此时状态仍为「正常」），用于「未来 10 分钟故障预警」。
+
+## 文件格式（服务器故障检测标准）
+
+`series/*.csv`：60 行，表头固定为
+
+```
+minute,cpu_pct,cpu_temp_c,mem_pct,gpu_pct,gpu_temp_c,gpu_mem_pct,disk_io_mbps,net_mbps
+```
+
+非 GPU 节点的 GPU 三列为 0。
+
+`labels.csv`：表头固定为 `file_name,label,server,role,onset_min,state_seq,warn_seq`
+
+- `state_seq`：60 个逐分钟标准状态码（JSON 数组，即 ground truth）
+- `warn_seq`：60 个逐分钟预警真值（1 表示当前正常且未来 10 分钟内将发生故障）
+- `onset_min`：故障起始分钟；`-1` 表示没有故障，`>=60` 表示故障发生在窗口之后、窗口内只有前兆
+"""
 
 
 def build_dataset() -> dict:
-    meta: dict = {
-        "id": "Admin/0x07-server-telemetry-dataset",
-        "name": "0x07-server-telemetry-dataset",
-        "task": "server-fault-0x07",
-        "window_minutes": WINDOW,
-        "warn_horizon_minutes": WARN_HORIZON,
-        "channels": COLUMNS[1:],
-        "states": STATES,
-        "servers": [s["id"] for s in SERVERS],
-    }
-    for split, count, seed in (("train", 1200, 20261125), ("test", 300, 20261199)):
-        recs, counts = _make_split(split, count, seed)
-        size, sha = _pack_zip(split)
-        fault_minutes = sum(sum(1 for s in json.loads(r["state_seq"]) if s > 0) for r in recs)
-        meta[split] = {
-            "files": len(recs),
-            "rows": len(recs),
-            "sizeBytes": size,
-            "contentHash": sha,
-            "classCounts": {k: counts.get(k, 0) for k in STATES},
-            "faultMinuteRatio": round(fault_minutes / (len(recs) * WINDOW), 4),
-        }
-    (DATA_DIR / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    split_records = {split: _make_split(split, count, seed) for split, count, seed in (("train", 1200, 20261125), ("test", 300, 20261199))}
+    meta = std.write_meta(
+        DATA_DIR,
+        {
+            "id": "Admin/0x07-server-telemetry-dataset",
+            "name": "0x07-server-telemetry-dataset",
+            "displayName": "[0x07] 服务器运行遥测故障检测数据集",
+            "summary": "[0x07] 8 台服务器逐分钟 CPU / GPU / 内存 / 磁盘 / 网络遥测，60 分钟 × 8 通道窗口，6 类运行状态逐分钟真值与 10 分钟预警真值。",
+            "tags": ["0x07", "服务器运维", "时序预测"],
+            "servers": [s["id"] for s in SERVERS],
+            "createdAt": "2026-11-25T01:00:00+08:00",
+            "benchmark": {"id": "0x07-server-fault-bench", "displayName": "[0x07] 服务器运行故障检测评测基准"},
+        },
+        split_records,
+    )
+    (DATA_DIR / "README.md").write_text(README.format(train=f"{meta['train']['files']:,}", test=f"{meta['test']['files']:,}"), encoding="utf-8")
     print(f"[0x07] 已生成 Admin/0x07-server-telemetry-dataset：train={meta['train']['files']} 条，test={meta['test']['files']} 条")
-    print(f"[0x07] train 类别分布 {meta['train']['classCounts']}")
-    print(f"[0x07] test  类别分布 {meta['test']['classCounts']}")
+    print(f"[0x07] test 类别分布 {meta['test']['classCounts']}")
     return meta
 
 

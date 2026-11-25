@@ -1,23 +1,23 @@
 <script setup lang="ts">
 /**
- * [0x07] 单个 60 分钟窗口的折线图视图：
+ * 服务器故障检测标准：单个 60 分钟窗口的折线图视图（所有标准算法 / 数据集共用）：
  *   1. 遥测曲线（利用率 / 温度 / 磁盘吞吐 / 网络吞吐），背景标出真值故障段
  *   2. 运行状态：ground truth vs 算法预测（阶梯线）
- *   3. 异常分数与未来 10 分钟预警概率，背景标出真值故障段与预警真值段
+ *   3. 故障概率与未来 10 分钟预警概率，背景标出真值故障段与预警真值段
  */
 import { computed } from 'vue'
-import LineChart0x07, { type Band0x07, type Series0x07 } from './LineChart0x07.vue'
-import { STATES_0X07, type Case0x07 } from './types'
+import SfLineChart, { type SfBand, type SfSeries } from './SfLineChart.vue'
+import { SF_STATES, type SfCase } from './types'
 
-const props = withDefaults(defineProps<{ c: Case0x07; states?: readonly string[]; narrow?: boolean }>(), { states: () => STATES_0X07 })
+const props = withDefaults(defineProps<{ c: SfCase; states?: readonly string[]; narrow?: boolean }>(), { states: () => SF_STATES })
 
 const x = computed(() => props.c.channels.cpu_pct.map((_, i) => i))
 const hasGpu = computed(() => props.c.channels.gpu_pct.some((v) => v > 0) || props.c.channels.gpu_temp_c.some((v) => v > 0))
 const hasGt = computed(() => Array.isArray(props.c.gt) && props.c.gt.length > 0)
 const hasPred = computed(() => Array.isArray(props.c.pred) && props.c.pred.length > 0)
 
-function runs(seq: number[] | null | undefined, kind: Band0x07['kind'], label: string): Band0x07[] {
-  const out: Band0x07[] = []
+function runs(seq: number[] | null | undefined, kind: SfBand['kind'], label: string): SfBand[] {
+  const out: SfBand[] = []
   if (!seq) return out
   let start = -1
   seq.forEach((v, i) => {
@@ -36,9 +36,9 @@ const bgBands = computed(() => [...gtBands.value, ...predBands.value])
 const minute = (v: number) => `第 ${Math.round(v)} 分钟`
 const pct = (v: number) => `${Math.round(v)}%`
 
-const util = computed<Series0x07[]>(() => {
+const util = computed<SfSeries[]>(() => {
   const ch = props.c.channels
-  const s: Series0x07[] = [
+  const s: SfSeries[] = [
     { key: 'cpu', name: 'CPU 利用率', values: ch.cpu_pct, color: 'var(--v7-s1)' },
     { key: 'mem', name: '内存占用', values: ch.mem_pct, color: 'var(--v7-s2)' },
   ]
@@ -48,16 +48,16 @@ const util = computed<Series0x07[]>(() => {
   }
   return s
 })
-const temps = computed<Series0x07[]>(() => {
-  const s: Series0x07[] = [{ key: 'ct', name: 'CPU 温度', values: props.c.channels.cpu_temp_c, color: 'var(--v7-s1)' }]
+const temps = computed<SfSeries[]>(() => {
+  const s: SfSeries[] = [{ key: 'ct', name: 'CPU 温度', values: props.c.channels.cpu_temp_c, color: 'var(--v7-s1)' }]
   if (hasGpu.value) s.push({ key: 'gt', name: 'GPU 温度', values: props.c.channels.gpu_temp_c, color: 'var(--v7-s3)' })
   return s
 })
-const disk = computed<Series0x07[]>(() => [{ key: 'disk', name: '磁盘吞吐', values: props.c.channels.disk_io_mbps, color: 'var(--v7-s1)', area: true }])
-const net = computed<Series0x07[]>(() => [{ key: 'net', name: '网络吞吐', values: props.c.channels.net_mbps, color: 'var(--v7-s1)', area: true }])
+const disk = computed<SfSeries[]>(() => [{ key: 'disk', name: '磁盘吞吐', values: props.c.channels.disk_io_mbps, color: 'var(--v7-s1)', area: true }])
+const net = computed<SfSeries[]>(() => [{ key: 'net', name: '网络吞吐', values: props.c.channels.net_mbps, color: 'var(--v7-s1)', area: true }])
 
-const stateSeries = computed<Series0x07[]>(() => {
-  const s: Series0x07[] = []
+const stateSeries = computed<SfSeries[]>(() => {
+  const s: SfSeries[] = []
   if (hasGt.value) s.push({ key: 'gt', name: 'Ground Truth', values: props.c.gt!, color: 'var(--v7-s1)', step: true, width: 4 })
   if (hasPred.value) s.push({ key: 'pred', name: '算法预测', values: props.c.pred!, color: 'var(--v7-s2)', step: true, width: 2 })
   return s
@@ -65,9 +65,9 @@ const stateSeries = computed<Series0x07[]>(() => {
 const stateTicks = computed(() => props.states.map((_, i) => i))
 const stateName = (v: number) => props.states[Math.round(v)] ?? String(v)
 
-const scoreSeries = computed<Series0x07[]>(() => {
-  const s: Series0x07[] = []
-  if (props.c.anomaly) s.push({ key: 'an', name: '异常分数', values: props.c.anomaly.map((v) => v * 100), color: 'var(--v7-s2)', area: true })
+const scoreSeries = computed<SfSeries[]>(() => {
+  const s: SfSeries[] = []
+  if (props.c.anomaly) s.push({ key: 'an', name: '故障概率', values: props.c.anomaly.map((v) => v * 100), color: 'var(--v7-s2)', area: true })
   if (props.c.warn) s.push({ key: 'wn', name: '10 分钟预警概率', values: props.c.warn.map((v) => v * 100), color: 'var(--v7-s7)' })
   return s
 })
@@ -89,7 +89,7 @@ const agree = computed(() => {
 </script>
 
 <template>
-  <div class="viz0x07-scope space-y-4">
+  <div class="sf-viz-scope space-y-4">
     <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600 dark:text-gray-300">
       <span v-if="c.server" class="mono">{{ c.server }}<span v-if="c.role" class="text-gray-400"> · {{ c.role }}</span></span>
       <span v-if="c.label">真值：<strong class="text-gray-900 dark:text-white">{{ c.label }}</strong></span>
@@ -103,25 +103,25 @@ const agree = computed(() => {
     <div class="grid gap-x-6 gap-y-4" :class="narrow ? 'grid-cols-1' : 'md:grid-cols-2'">
       <div>
         <p class="mb-1 text-xs font-medium text-gray-700 dark:text-gray-200">利用率（%）</p>
-        <LineChart0x07 :x="x" :series="util" :bands="bgBands" :markers="onsetMarker" :y-min="0" :y-max="100" :y-format="pct" :x-format="minute" :height="narrow ? 150 : 170" />
+        <SfLineChart :x="x" :series="util" :bands="bgBands" :markers="onsetMarker" :y-min="0" :y-max="100" :y-format="pct" :x-format="minute" :height="narrow ? 150 : 170" />
       </div>
       <div>
         <p class="mb-1 text-xs font-medium text-gray-700 dark:text-gray-200">温度（℃）</p>
-        <LineChart0x07 :x="x" :series="temps" :bands="bgBands" :markers="onsetMarker" :y-min="30" :y-max="100" :y-format="(v) => `${Math.round(v)}℃`" :x-format="minute" :height="narrow ? 150 : 170" />
+        <SfLineChart :x="x" :series="temps" :bands="bgBands" :markers="onsetMarker" :y-min="30" :y-max="100" :y-format="(v) => `${Math.round(v)}℃`" :x-format="minute" :height="narrow ? 150 : 170" />
       </div>
       <div>
         <p class="mb-1 text-xs font-medium text-gray-700 dark:text-gray-200">磁盘吞吐（MB/s）</p>
-        <LineChart0x07 :x="x" :series="disk" :bands="bgBands" :markers="onsetMarker" :y-min="0" :y-max="500" :y-format="(v) => String(Math.round(v))" :x-format="minute" :height="narrow ? 130 : 150" />
+        <SfLineChart :x="x" :series="disk" :bands="bgBands" :markers="onsetMarker" :y-min="0" :y-max="500" :y-format="(v) => String(Math.round(v))" :x-format="minute" :height="narrow ? 130 : 150" />
       </div>
       <div>
         <p class="mb-1 text-xs font-medium text-gray-700 dark:text-gray-200">网络吞吐（Mbps）</p>
-        <LineChart0x07 :x="x" :series="net" :bands="bgBands" :markers="onsetMarker" :y-min="0" :y-max="1000" :y-format="(v) => String(Math.round(v))" :x-format="minute" :height="narrow ? 130 : 150" />
+        <SfLineChart :x="x" :series="net" :bands="bgBands" :markers="onsetMarker" :y-min="0" :y-max="1000" :y-format="(v) => String(Math.round(v))" :x-format="minute" :height="narrow ? 130 : 150" />
       </div>
     </div>
 
     <div v-if="stateSeries.length">
       <p class="mb-1 text-xs font-medium text-gray-700 dark:text-gray-200">运行状态：{{ hasGt && hasPred ? 'Ground Truth vs 算法预测' : hasGt ? 'Ground Truth' : '算法预测' }}</p>
-      <LineChart0x07
+      <SfLineChart
         :x="x"
         :series="stateSeries"
         :markers="onsetMarker"
@@ -138,8 +138,8 @@ const agree = computed(() => {
     </div>
 
     <div v-if="scoreSeries.length">
-      <p class="mb-1 text-xs font-medium text-gray-700 dark:text-gray-200">异常分数与未来 10 分钟故障预警（%）</p>
-      <LineChart0x07 :x="x" :series="scoreSeries" :bands="scoreBands" :markers="onsetMarker" :y-min="0" :y-max="100" :y-format="pct" :tip-format="(v) => `${v.toFixed(1)}%`" :x-format="minute" :height="narrow ? 150 : 170" x-label="窗口内分钟" />
+      <p class="mb-1 text-xs font-medium text-gray-700 dark:text-gray-200">{{ c.warn ? '故障概率与未来 10 分钟故障预警（%）' : '故障概率（%）' }}</p>
+      <SfLineChart :x="x" :series="scoreSeries" :bands="scoreBands" :markers="onsetMarker" :y-min="0" :y-max="100" :y-format="pct" :tip-format="(v) => `${v.toFixed(1)}%`" :x-format="minute" :height="narrow ? 150 : 170" x-label="窗口内分钟" />
     </div>
   </div>
 </template>

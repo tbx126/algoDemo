@@ -14,8 +14,7 @@ import StatusBadge from '@/components/ui/StatusBadge.vue'
 import HashText from '@/components/ui/HashText.vue'
 import OrgAvatar from '@/components/ui/OrgAvatar.vue'
 import SynthImage from '@/components/ui/SynthImage.vue'
-import Fault0x6ECharts, { type Fault0x6EVisual } from '@/components/eval/Fault0x6ECharts.vue'
-import EvalViz0x07 from '@/components/fault0x07/EvalViz0x07.vue'
+import SfEvalViz from '@/components/serverfault/SfEvalViz.vue'
 import { useRouter } from 'vue-router'
 
 const route = useRoute()
@@ -147,19 +146,14 @@ async function rerun() {
         </div>
       </div>
 
-      <!-- [0x07] 服务器运行故障检测：折线图可视化（测试集样本曲线仅管理员可见） -->
-      <EvalViz0x07 v-if="run.status === 'succeeded' && run.viz0x07" class="mt-6" :viz="run.viz0x07" :show-cases="can.testAccess" />
+      <!-- 服务器故障检测标准：统一评测器折线图（测试集样本曲线仅管理员可见） -->
+      <SfEvalViz v-if="run.status === 'succeeded' && run.vizServerFault" class="mt-6" :viz="run.vizServerFault" :show-cases="can.testAccess" />
 
       <div class="mt-6 grid gap-6 lg:grid-cols-[1fr_380px]">
         <div class="min-w-0 space-y-6">
-          <!-- 0x6E 服务器故障时序检测专属多折线图可视化 -->
-          <div v-if="run.status === 'succeeded' && run.visual0x6E" class="card p-5">
-            <Fault0x6ECharts :visual="run.visual0x6E as unknown as Fault0x6EVisual" />
-          </div>
-
           <!-- 每类指标 -->
           <div v-if="perClass.length" class="card p-5">
-            <h2 class="section-title mb-1">各类别 {{ primary?.label }}</h2>
+            <h2 class="section-title mb-1">{{ run.perClassLabel ?? `各类别 ${primary?.label ?? ''}` }}</h2>
             <p class="mb-4 text-xs text-gray-500">按得分升序，便于定位薄弱类别</p>
             <div class="space-y-2">
               <div v-for="c in perClass" :key="c.label" class="flex items-center gap-3 text-sm">
@@ -173,7 +167,7 @@ async function rerun() {
           </div>
 
           <!-- 错误样例 -->
-          <div v-if="can.testAccess && ds && run.status === 'succeeded' && !['signal-processing', 'optimization', 'power-forecast', 'server-fault-0x07'].includes(ds.task)" class="card p-5">
+          <div v-if="can.testAccess && ds && run.status === 'succeeded' && !['signal-processing', 'optimization', 'power-forecast', 'server-fault'].includes(ds.task)" class="card p-5">
             <h2 class="section-title mb-1">错误样例</h2>
             <p class="mb-4 text-xs text-gray-500">
               来自测试集，仅管理员可见<template v-if="run.errorSamples">（展示 {{ run.errorSamples.length }} 个真实误判样本）</template>

@@ -1,14 +1,14 @@
 <script setup lang="ts">
 /**
- * [0x07] 通用折线图（SVG）
+ * 通用折线图（SVG，服务器故障检测标准组件使用）
  * - 多序列折线，可选阶梯线 / 虚线 / 面积
  * - 背景区间（真值故障段、预警段等），竖向标注线
  * - 悬停十字线 + 提示框；>= 2 个序列时显示图例
- * - 颜色取自 .viz0x07 上的 CSS 变量，亮 / 暗两套
+ * - 颜色取自 .sf-viz 上的 CSS 变量，亮 / 暗两套
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
-export interface Series0x07 {
+export interface SfSeries {
   key: string
   name: string
   values: (number | null)[]
@@ -18,7 +18,7 @@ export interface Series0x07 {
   area?: boolean
   width?: number
 }
-export interface Band0x07 {
+export interface SfBand {
   from: number
   to: number
   kind: 'fault' | 'warn' | 'pred'
@@ -28,16 +28,16 @@ export interface Band0x07 {
 const props = withDefaults(
   defineProps<{
     x: number[]
-    series: Series0x07[]
+    series: SfSeries[]
     height?: number
     yMin?: number
     yMax?: number
     yTicks?: number[]
     yFormat?: (v: number) => string
     xFormat?: (v: number) => string
-    tipFormat?: (v: number, s: Series0x07) => string
+    tipFormat?: (v: number, s: SfSeries) => string
     xLabel?: string
-    bands?: Band0x07[]
+    bands?: SfBand[]
     markers?: { x: number; label: string }[]
     legend?: boolean
     padLeft?: number
@@ -181,7 +181,7 @@ const tip = computed(() => {
 </script>
 
 <template>
-  <div ref="root" class="viz0x07 relative w-full select-none">
+  <div ref="root" class="sf-viz relative w-full select-none">
     <div v-if="legend && series.length > 1" class="mb-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-gray-600 dark:text-gray-300">
       <span v-for="s in series" :key="s.key" class="inline-flex items-center gap-1.5">
         <svg width="16" height="8" aria-hidden="true">
@@ -198,16 +198,16 @@ const tip = computed(() => {
       <rect v-for="(b, i) in bandRects" :key="'b' + i" :x="b.x" :y="pad.t" :width="b.w" :height="plotH" :class="`band-${b.kind}`" />
       <!-- 网格与 y 轴刻度 -->
       <g v-for="t in ticks" :key="'t' + t">
-        <line :x1="pad.l" :x2="width - pad.r" :y1="sy(t)" :y2="sy(t)" class="grid0x07" />
-        <text :x="pad.l - 6" :y="sy(t) + 3" text-anchor="end" class="axis0x07">{{ fy(t) }}</text>
+        <line :x1="pad.l" :x2="width - pad.r" :y1="sy(t)" :y2="sy(t)" class="sf-grid" />
+        <text :x="pad.l - 6" :y="sy(t) + 3" text-anchor="end" class="sf-axis">{{ fy(t) }}</text>
       </g>
       <!-- x 轴刻度 -->
-      <text v-for="t in xTicks" :key="'x' + t" :x="sx(t)" :y="height - (xLabel ? 18 : 6)" text-anchor="middle" class="axis0x07">{{ fx(t) }}</text>
-      <text v-if="xLabel" :x="pad.l + plotW / 2" :y="height - 3" text-anchor="middle" class="axis0x07">{{ xLabel }}</text>
+      <text v-for="t in xTicks" :key="'x' + t" :x="sx(t)" :y="height - (xLabel ? 18 : 6)" text-anchor="middle" class="sf-axis">{{ fx(t) }}</text>
+      <text v-if="xLabel" :x="pad.l + plotW / 2" :y="height - 3" text-anchor="middle" class="sf-axis">{{ xLabel }}</text>
       <!-- 竖向标注 -->
       <g v-for="(m, i) in markers ?? []" :key="'m' + i">
-        <line :x1="sx(m.x)" :x2="sx(m.x)" :y1="pad.t" :y2="pad.t + plotH" class="marker0x07" />
-        <text :x="sx(m.x) + 4" :y="pad.t + 10" class="axis0x07 marker-text0x07">{{ m.label }}</text>
+        <line :x1="sx(m.x)" :x2="sx(m.x)" :y1="pad.t" :y2="pad.t + plotH" class="sf-marker" />
+        <text :x="sx(m.x) + 4" :y="pad.t + 10" class="sf-axis sf-marker-text">{{ m.label }}</text>
       </g>
       <!-- 序列 -->
       <path v-for="p in paths.filter((p) => p.area)" :key="'a' + p.key" :d="p.area" :fill="p.color" fill-opacity="0.1" />
@@ -224,8 +224,8 @@ const tip = computed(() => {
       />
       <!-- 悬停 -->
       <g v-if="tip">
-        <line :x1="tip.X" :x2="tip.X" :y1="pad.t" :y2="pad.t + plotH" class="cross0x07" />
-        <circle v-for="r in tip.rows" :key="r.name" :cx="tip.X" :cy="r.y" r="4" :fill="r.color" class="dot0x07" />
+        <line :x1="tip.X" :x2="tip.X" :y1="pad.t" :y2="pad.t + plotH" class="sf-cross" />
+        <circle v-for="r in tip.rows" :key="r.name" :cx="tip.X" :cy="r.y" r="4" :fill="r.color" class="sf-dot" />
       </g>
     </svg>
     <div
@@ -244,8 +244,8 @@ const tip = computed(() => {
 </template>
 
 <style>
-.viz0x07,
-.viz0x07-scope {
+.sf-viz,
+.sf-viz-scope {
   --v7-s1: #2a78d6;
   --v7-s2: #eb6834;
   --v7-s3: #1baf7a;
@@ -261,8 +261,8 @@ const tip = computed(() => {
   --v7-band-warn: rgba(237, 161, 0, 0.14);
   --v7-band-pred: rgba(235, 104, 52, 0.1);
 }
-.dark .viz0x07,
-.dark .viz0x07-scope {
+.dark .sf-viz,
+.dark .sf-viz-scope {
   --v7-s1: #3987e5;
   --v7-s2: #d95926;
   --v7-s3: #199e70;
@@ -278,43 +278,43 @@ const tip = computed(() => {
   --v7-band-warn: rgba(201, 133, 0, 0.2);
   --v7-band-pred: rgba(217, 89, 38, 0.16);
 }
-.viz0x07 .grid0x07 {
+.sf-viz .sf-grid {
   stroke: var(--v7-grid);
   stroke-width: 1;
 }
-.viz0x07 .axis0x07 {
+.sf-viz .sf-axis {
   fill: var(--v7-axis);
   font-size: 10px;
 }
-.viz0x07 .marker0x07 {
+.sf-viz .sf-marker {
   stroke: var(--v7-ink);
   stroke-width: 1;
   stroke-dasharray: 3 3;
   opacity: 0.6;
 }
-.viz0x07 .marker-text0x07 {
+.sf-viz .sf-marker-text {
   fill: var(--v7-ink);
 }
-.viz0x07 .cross0x07 {
+.sf-viz .sf-cross {
   stroke: var(--v7-axis);
   stroke-width: 1;
 }
-.viz0x07 .dot0x07 {
+.sf-viz .sf-dot {
   stroke: white;
   stroke-width: 2;
 }
-.dark .viz0x07 .dot0x07 {
+.dark .sf-viz .sf-dot {
   stroke: #111827;
 }
-.viz0x07 .band-fault {
+.sf-viz .band-fault {
   fill: var(--v7-band-fault);
   background: var(--v7-band-fault);
 }
-.viz0x07 .band-warn {
+.sf-viz .band-warn {
   fill: var(--v7-band-warn);
   background: var(--v7-band-warn);
 }
-.viz0x07 .band-pred {
+.sf-viz .band-pred {
   fill: var(--v7-band-pred);
   background: var(--v7-band-pred);
 }

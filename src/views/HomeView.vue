@@ -53,7 +53,7 @@ const TASK_COLORS: Record<string, [string, string]> = {
   'instance-segmentation': ['#14b8a6', '#06b6d4'],
   'keypoint-detection': ['#f43f5e', '#ec4899'],
   'power-forecast': ['#6366f1', '#8b5cf6'],
-  'server-fault-0x07': ['#ef4444', '#f97316'],
+  'server-fault': ['#ef4444', '#f97316'],
   'signal-processing': ['#f97316', '#f59e0b'],
   optimization: ['#84cc16', '#22c55e'],
   custom: ['#64748b', '#94a3b8'],
