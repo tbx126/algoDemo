@@ -34,7 +34,7 @@ import { algorithms as A0 } from '@/mock/algorithms'
 import { datasets as D0 } from '@/mock/datasets'
 import { benchmarks as B0 } from '@/mock/benchmarks'
 import { evalRuns as E0 } from '@/mock/evals'
-import { evaluators as EV0 } from '@/mock/evaluators'
+import { STD_SERIES_EVALUATORS, evaluators as EV0 } from '@/mock/evaluators'
 import { orgs as O0, users as U0 } from '@/mock/orgs'
 import realBootstrapSnapshot from '@/mock/realBootstrapSnapshot.json'
 import { useSession } from '@/stores/session'
@@ -77,6 +77,12 @@ try {
   }
 } catch {
   /* 数据损坏或不可用时使用默认 mock */
+}
+// 时序标准评测器以代码为准（覆盖本地缓存），并移除已废弃的旧版功率预测示例评测器
+{
+  const evs = SOURCES.evaluators
+  for (let i = evs.length - 1; i >= 0; i--) if (evs[i].id === 'custom-power-forecast' || STD_SERIES_EVALUATORS.some((e) => e.id === evs[i].id)) evs.splice(i, 1)
+  evs.push(...STD_SERIES_EVALUATORS.map((e) => ({ ...e })))
 }
 // 一次性精简历史冗余标签（清理与任务分类/算法名重复的旧标签）
 try {

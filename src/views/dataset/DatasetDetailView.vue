@@ -22,6 +22,8 @@ import EditDatasetModal from '@/components/admin/EditDatasetModal.vue'
 import SfSeriesPreview from '@/components/serverfault/SfSeriesPreview.vue'
 import PfSeriesPreview from '@/components/powerforecast/PfSeriesPreview.vue'
 import { SF_TASK } from '@/components/serverfault/types'
+import SeriesSampleView from '@/components/dataset/SeriesSampleView.vue'
+import { isSeriesTask } from '@/utils/meta'
 
 const route = useRoute()
 const router = useRouter()
@@ -115,7 +117,7 @@ function download(p: SplitName) {
     document.body.appendChild(a)
     a.click()
     a.remove()
-    toast(`已开始下载真实${PART_LABEL[p]}压缩包（images/ + labels.csv）`)
+    toast(`已开始下载真实${PART_LABEL[p]}压缩包（${isSeriesTask(ds.value!.task) ? 'series/ + labels.csv' : 'images/ + labels.csv'}）`)
     return
   }
   toast(`已生成${PART_LABEL[p]} ${ds.value?.[p]?.versions[0].version} 的下载链接（images/ + labels.csv，模拟）`)
@@ -170,7 +172,7 @@ function download(p: SplitName) {
                 <SfSeriesPreview :dataset-id="ds.id" part="train" :rows="ds.realPreview?.train ?? []" :max="12" />
               </div>
               <!-- 新能源功率预测标准数据集：48h 功率与 NWP 气象折线图预览 -->
-              <div v-else-if="ds.task === 'power-forecast' && isRealDataset" class="p-3">
+              <div v-else-if="ds.task === 'power-forecast'" class="p-3">
                 <PfSeriesPreview :dataset-id="ds.id" part="train" :rows="ds.realPreview?.train ?? []" :max="12" />
               </div>
               <div v-else-if="ds.realPreview?.train?.length" class="grid gap-1.5 p-1.5" :class="ds.task === 'ocr' ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-3 sm:grid-cols-6'">
@@ -243,7 +245,7 @@ function download(p: SplitName) {
           <div v-else-if="locked" class="flex flex-col items-center gap-2 rounded-xl border border-dashed border-amber-300 bg-amber-50/50 px-6 py-16 text-center dark:border-amber-800 dark:bg-amber-900/10">
             <Lock class="size-8 text-amber-500" />
             <p class="font-medium text-gray-900 dark:text-white">测试集内容仅管理员可见</p>
-            <p class="max-w-md text-sm text-gray-600 dark:text-gray-400">当前版本 {{ part.versions[0].version }} 共 {{ fmtNum(part.versions[0].files) }} 个文件。评测时算法容器只读取 images/，labels.csv 留在平台侧计算指标。</p>
+            <p class="max-w-md text-sm text-gray-600 dark:text-gray-400">当前版本 {{ part.versions[0].version }} 共 {{ fmtNum(part.versions[0].files) }} 个文件。<template v-if="isSeriesTask(ds.task)">评测时算法只拿到 series/ 下的输入窗口，labels.csv 真值留在评测器内计算指标。</template><template v-else>评测时算法容器只读取 images/，labels.csv 留在平台侧计算指标。</template></p>
             <RouterLink v-if="can.runEval && benches.length" :to="'/evals/new?bench=' + benches[0].id" class="btn-default mt-2"><FlaskConical class="size-4" />在评测基准上发起评测</RouterLink>
           </div>
 
@@ -297,10 +299,11 @@ function download(p: SplitName) {
               <SfSeriesPreview :dataset-id="ds.id" :part="partName" :rows="realRows" :max="36" />
             </template>
             <!-- 新能源功率预测标准数据集：series/ 48h 功率与气象折线图预览 -->
-            <template v-else-if="ds.task === 'power-forecast' && isRealDataset">
+            <template v-else-if="ds.task === 'power-forecast'">
               <h2 class="mt-8 mb-3 text-sm font-semibold">series/ 功率时序折线图预览 <span class="font-normal text-gray-500">· 灰线为前一天 24h 实测，蓝线为次日 24h 真实功率（GT），紫色虚线为 NWP + 名义功率曲线基线</span></h2>
               <PfSeriesPreview :dataset-id="ds.id" :part="partName" :rows="realRows" :max="24" />
             </template>
+            <p v-if="isSeriesTask(ds.task) && !realRows.length" class="mt-3 text-sm text-gray-500">时序样本需连接后端读取，当前无法预览。</p>
             <template v-else>
             <div class="mt-8 mb-3 flex items-center gap-3">
               <h2 class="text-sm font-semibold">images/ 预览</h2>
@@ -376,9 +379,11 @@ function download(p: SplitName) {
         </div>
       </div>
 
-      <Modal v-model:open="zoomOpen" :title="zoomReal ? zoomReal.file_name : zoom !== null ? fileNameOf(partName, zoom, spec?.dataExt) : ''" width="max-w-3xl">
+      <Modal v-model:open="zoomOpen" :title="zoomReal ? zoomReal.file_name : zoom !== null ? fileNameOf(partName, zoom, spec?.dataExt) : ''" :width="isSeriesTask(ds.task) ? 'max-w-5xl' : 'max-w-3xl'">
         <div v-if="zoom !== null && part" class="space-y-4">
-          <div class="overflow-hidden rounded-lg" :class="ds.task === 'ocr' ? 'flex min-h-[120px] items-center justify-center border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-950' : 'bg-gray-100 dark:bg-gray-900'">
+          <SeriesSampleView v-if="isSeriesTask(ds.task) && zoomReal" :dataset-id="ds.id" :part="partName" :file-name="zoomReal.file_name" :task="ds.task" />
+          <p v-else-if="isSeriesTask(ds.task)" class="text-sm text-gray-500">时序样本需连接后端读取，当前无法预览。</p>
+          <div v-else class="overflow-hidden rounded-lg" :class="ds.task === 'ocr' ? 'flex min-h-[120px] items-center justify-center border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-950' : 'bg-gray-100 dark:bg-gray-900'">
             <img v-if="zoomReal" :src="zoomReal.url" :alt="zoomReal.label" class="mx-auto max-h-[60vh] w-auto object-contain" />
             <SynthImage v-else :seed="seedOf(zoom)" :task="ds.task" :classes="ds.classes" :sample-images="ds.sampleImages" annotate :width="960" :height="540" />
           </div>

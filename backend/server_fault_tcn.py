@@ -47,8 +47,6 @@ CARD = {
     "tags": ["服务器运维", "实时推理"],
     "business": "other",
     "codeFile": "server_fault_tcn.py",
-    "imageDigest": "sha256:5f7c4e1a9b2d0c3e8f6a7b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e",
-    "weightsHash": "sha256:5f7c4e1a9b2d0c3e",
     "gpuMem": 0.2,
     "likes": 4,
     "downloads": 6,

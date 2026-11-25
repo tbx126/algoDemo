@@ -6,7 +6,8 @@ import { ApiError, createBenchmark, listDatasets, listEvaluators } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
-import { BUILTIN_TASKS, TASKS } from '@/utils/meta'
+import { BUILTIN_TASKS, TASKS, latencyLabel } from '@/utils/meta'
+import { STD_SERIES_EVALUATORS } from '@/mock/evaluators'
 import type { MetricDef } from '@/types'
 import StateView from '@/components/ui/StateView.vue'
 import FakeUpload from '@/components/ui/FakeUpload.vue'
@@ -18,6 +19,7 @@ const { data: dsList } = useAsync(() => listDatasets({ pageSize: 999 }))
 const { data: evList } = useAsync(() => listEvaluators())
 
 const PRESETS: Record<string, MetricDef[]> = {
+  ...Object.fromEntries(STD_SERIES_EVALUATORS.map((e) => [e.task, e.supportedMetrics.map((m) => ({ ...m }))])),
   'image-classification': [
     { key: 'top1', label: '准确率', higherIsBetter: true, unit: '%', primary: true },
     { key: 'f1', label: 'Macro-F1', higherIsBetter: true, unit: '%' },
@@ -43,8 +45,9 @@ const PRESETS: Record<string, MetricDef[]> = {
     { key: 'cer', label: '字符错误率 CER', higherIsBetter: false, unit: '%' },
   ],
 }
-const PERF: MetricDef[] = [
-  { key: 'latency_ms', label: '单图耗时', higherIsBetter: false, unit: 'ms' },
+/** 性能指标：耗时按任务称为单图 / 单窗口 / 单样本 */
+const perfMetrics = (task?: string): MetricDef[] => [
+  { key: 'latency_ms', label: latencyLabel(task), higherIsBetter: false, unit: 'ms' },
   { key: 'peak_mem_gb', label: '峰值显存', higherIsBetter: false, unit: 'GB' },
 ]
 
@@ -110,7 +113,7 @@ async function submit() {
       datasetVersion: f.datasetVersion,
       evaluator: evaluator.value.name,
       evaluatorVersion: evaluator.value.version,
-      metrics: [...f.metrics, ...(f.perf ? PERF : [])],
+      metrics: [...f.metrics, ...(f.perf ? perfMetrics(ds.value?.task) : [])],
       org: ds.value.org,
       evaluatorScript: f.evaluatorKind === 'custom' ? f.script?.file : undefined,
     })
@@ -235,7 +238,7 @@ function fillExample() {
               </tbody>
             </table>
           </div>
-          <label class="mt-3 flex items-center gap-2 text-sm"><input v-model="f.perf" type="checkbox" class="size-4 accent-brand-600" />同时记录单图耗时与峰值显存</label>
+          <label class="mt-3 flex items-center gap-2 text-sm"><input v-model="f.perf" type="checkbox" class="size-4 accent-brand-600" />同时记录{{ latencyLabel(ds?.task) }}与峰值显存</label>
         </div>
 
         <div class="flex justify-end gap-2 border-t border-gray-100 pt-4 dark:border-gray-800">

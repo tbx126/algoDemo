@@ -32,6 +32,7 @@ import power_lgbm_autoreg
 import power_lgbm_direct
 import power_lgbm_hybrid
 import power_registry
+from eval_lock import EVAL_LOCK
 
 ROOT = Path(__file__).resolve().parent
 DATA_ROOT = ROOT / "data"
@@ -112,7 +113,7 @@ def _part_rows(ds_id: str, d: Path, part: str, limit: int) -> list[dict]:
         "file_name": r["file_name"],
         "label": f"{r['value']} MW（{r['station']} · {r['weather']}）",
         "url": f"/real-api/datasets/{ds_id}/files/{part}/{Path(r['file_name']).name}",
-        "row": [r[c] for c in pstd.LABEL_COLUMNS[:-1]],
+        "row": [r[c] for c in pstd.LABEL_COLUMNS],
     } for r in mixed]
 
 
@@ -222,10 +223,13 @@ def _run_eval(eval_id: str, algo_id: str, bench_id: str) -> None:
         _update(eval_id, status="running", startedAt=_now(), progress=5)
         _update(eval_id, progress=10, log=f"[runner] 加载 {algo_id}@v1.0.0（{mod.device_label()}），按功率预测标准接口 predict_batch 调用")
         state = mod.load_state() or {}
-        if torch.cuda.is_available():
-            torch.cuda.reset_peak_memory_stats()
-        res = pstd.evaluate(mod.predict_batch, d, history=state.get("history"), say=lambda p, m: _update(eval_id, progress=p, log=m))
-        peak_gb = round(torch.cuda.max_memory_allocated() / 1024 ** 3, 3) if torch.cuda.is_available() else 0.0
+        # 只在算法实际使用 GPU 时记录显存峰值；纯 CPU 算法（如 LightGBM）记为 None
+        uses_gpu = torch.cuda.is_available() and not mod.device_label().startswith("CPU")
+        with EVAL_LOCK:  # 与其他标准的评测串行执行，显存峰值只计本次评测
+            if uses_gpu:
+                torch.cuda.reset_peak_memory_stats()
+            res = pstd.evaluate(mod.predict_batch, d, history=state.get("history"), say=lambda p, m: _update(eval_id, progress=p, log=m))
+            peak_gb = round(torch.cuda.max_memory_allocated() / 1024 ** 3, 3) if uses_gpu else None
         m = res["metrics"]
         with _LOCK:
             evals = _load_evals()
@@ -501,7 +505,7 @@ def _make_dataset_routes(ds_id: str, d: Path) -> None:
 
     def part(part: Literal["train", "test"], limit: int = 200):
         meta = pstd.read_meta(d) or {}
-        return {"part": part, "columns": pstd.LABEL_COLUMNS[:-1], "total": meta.get(part, {}).get("files", 0), "rows": _part_rows(ds_id, d, part, max(1, min(limit, 500)))}
+        return {"part": part, "columns": pstd.LABEL_COLUMNS, "total": meta.get(part, {}).get("files", 0), "rows": _part_rows(ds_id, d, part, max(1, min(limit, 500)))}
 
     def file(part: Literal["train", "test"], filename: str):
         path = d / part / "series" / _safe_name(filename)

@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Box, Check, CircleAlert, CircleCheck, CircleX, Download, LoaderCircle, Play, Plus, ShieldCheck, Sparkles, Trash2 } from 'lucide-vue-next'
+import { Box, Check, CircleAlert, CircleCheck, CircleX, Download, LoaderCircle, Play, Plus, ShieldCheck, Sparkles, Trash2, TriangleAlert } from 'lucide-vue-next'
 import { ApiError, createAlgorithm, listTags, uploadRealAlgorithm, validateAlgorithmPackage, type AlgoValidationResult } from '@/api'
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
-import { BUSINESS_CATEGORIES, TASKS } from '@/utils/meta'
+import { BUSINESS_CATEGORIES, TASKS, isImageTask, isSeriesTask } from '@/utils/meta'
 import { orgs } from '@/mock/orgs'
 import {
   AUDIO_FORMATS,
@@ -545,12 +545,18 @@ function fillExample() {
           <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div>
               <p class="text-sm font-semibold text-gray-900 dark:text-white">标准算法包（.zip 或单文件 predictor.py）<span class="ml-0.5 text-rose-500">*</span></p>
-              <p class="text-xs text-gray-500">需实现 <code class="mono">Predictor(model_dir).predict(image_bytes, params) -&gt; dict</code> 或顶层 <code class="mono">predict()</code> 函数</p>
+              <p v-if="isSeriesTask(sf.task)" class="text-xs text-gray-500">时序标准任务需实现 <code class="mono">predict_batch(raw, specs)</code> 标准接口（见模板）</p>
+              <p v-else class="text-xs text-gray-500">需实现 <code class="mono">Predictor(model_dir).predict(image_bytes, params) -&gt; dict</code> 或顶层 <code class="mono">predict()</code> 函数</p>
             </div>
             <a :href="`/real-api/templates/algorithm/${sf.task}`" class="btn-default py-1 text-xs">
               <Download class="size-3.5" />下载「{{ TASKS[sf.task].label }}」标准模板 (.zip)
             </a>
           </div>
+          <p v-if="!isImageTask(sf.task) && sf.task !== 'custom'" class="mb-3 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+            <TriangleAlert class="mt-0.5 size-3.5 shrink-0" />
+            <span v-if="isSeriesTask(sf.task)">{{ TASKS[sf.task].label }}是时序标准任务：算法实现 <code class="mono">predict_batch</code> 后由标准统一评测器评测。在线冒烟测试只能验证图像类算法，自助上传暂不支持接入时序标准，请按模板实现后联系管理员接入。</span>
+            <span v-else>「{{ TASKS[sf.task].label }}」任务的输入不是图片，在线冒烟测试只能验证图像类算法，自助上传暂不支持该任务，请联系管理员接入。</span>
+          </p>
           <FakeUpload v-model="sf.pkg" accept=".zip,.py" label="拖拽标准算法包 (.zip / predictor.py) 到这里，或点击选择" hint="上传后点击下方「运行在线冒烟测试」，由后端真实加载并校验输出格式" @update:model-value="smokeResult = null" />
 
           <div class="mt-3 flex flex-wrap items-center gap-2">

@@ -1,5 +1,69 @@
 import type { Evaluator } from '@/types'
 
+/** 时序标准任务的统一评测器（与 backend/power_forecast_std.py、backend/server_fault_std.py 的 evaluate 一致） */
+export const STD_SERIES_EVALUATORS: Evaluator[] = [
+  {
+    id: 'power-forecast-std-evaluator',
+    name: '新能源功率预测标准评测器',
+    version: 'v2.0.0',
+    kind: 'builtin',
+    task: 'power-forecast',
+    status: 'ready',
+    description: '新能源功率预测标准的统一评测器：按标准接口 predict_batch 调用算法（算法只拿到输入窗口与场站规格），按装机容量归一化计算考核准确率等 8 项指标；风电计全天、光伏只计 6:00–19:00；同时给出持续法与 NWP 名义功率曲线两个参照基线。',
+    entrypoint: 'backend/power_forecast_std.py:evaluate',
+    runtime: 'Python 3.12 · NumPy',
+    supportedMetrics: [
+      { key: 'accuracy_rate', label: '考核准确率', higherIsBetter: true, unit: '%', primary: true },
+      { key: 'nrmse', label: '归一化 RMSE', higherIsBetter: false, unit: '%' },
+      { key: 'nmae', label: '归一化 MAE', higherIsBetter: false, unit: '%' },
+      { key: 'r2', label: '决定系数 R²', higherIsBetter: true, unit: '%' },
+      { key: 'peak_err_mw', label: '日峰值误差', higherIsBetter: false, unit: 'MW' },
+      { key: 'qualified_rate', label: '单日合格率', higherIsBetter: true, unit: '%' },
+      { key: 'skill', label: '相对 NWP 基线提升', higherIsBetter: true, unit: '%' },
+      { key: 'night_mw', label: '光伏夜间误报出力', higherIsBetter: false, unit: 'MW' },
+    ],
+    config: [],
+    script: `# 完整实现见 backend/power_forecast_std.py
+def evaluate(predict_batch, data_dir, history=None, say=None) -> dict:
+    raw, y, metas, specs = load_split(data_dir, "test")   # 真值只在评测器内读取
+    pred = predict_batch(raw.copy(), specs)               # [N, 24] MW
+    mask = eval_mask(raw, specs)                          # 风电全天，光伏 6:00-19:00
+    nrmse = sqrt(mean(((pred - y) / capacity)[mask] ** 2))
+    return {"accuracy_rate": (1 - nrmse) * 100, ...}`,
+    updatedAt: '2026-11-25T16:00:00+08:00',
+    updatedBy: 'admin',
+  },
+  {
+    id: 'server-fault-std-evaluator',
+    name: '服务器故障检测标准评测器',
+    version: 'v1.0.0',
+    kind: 'builtin',
+    task: 'server-fault',
+    status: 'ready',
+    description: '服务器故障检测标准的统一评测器：按标准接口 predict_batch 调用算法（算法只拿到 60 分钟 × 8 通道遥测与机器规格），计算逐分钟故障 F1、故障类型 Macro-F1、事件检出率、误报率、检测时延与 10 分钟预警 AUC；并做因果性检查，算法使用未来数据即判评测失败。',
+    entrypoint: 'backend/server_fault_std.py:evaluate',
+    runtime: 'Python 3.12 · NumPy',
+    supportedMetrics: [
+      { key: 'fault_f1', label: '逐分钟故障检测 F1', higherIsBetter: true, unit: '%', primary: true },
+      { key: 'fault_auc', label: '故障检测 AUC', higherIsBetter: true, unit: '%' },
+      { key: 'state_macro_f1', label: '故障类型 Macro-F1', higherIsBetter: true, unit: '%' },
+      { key: 'event_recall', label: '故障事件检出率', higherIsBetter: true, unit: '%' },
+      { key: 'false_alarm_rate', label: '正常窗口误报率', higherIsBetter: false, unit: '%' },
+      { key: 'detect_delay_min', label: '平均检测时延', higherIsBetter: false, unit: '分钟' },
+      { key: 'warn_auc', label: '10 分钟预警 AUC', higherIsBetter: true, unit: '%' },
+    ],
+    config: [],
+    script: `# 完整实现见 backend/server_fault_std.py
+def evaluate(predict_batch, data_dir, history=None, say=None) -> dict:
+    raw, y, warn, metas = load_split(data_dir, "test")    # 真值只在评测器内读取
+    out = predict_batch(raw, load_specs(data_dir, metas)) # fault_prob / state / warn_prob [N, 60]
+    check_causal(predict_batch, raw, specs)               # 改动未来数据不得影响过去的输出
+    return {"fault_f1": ..., "false_alarm_rate": ..., "warn_auc": ...}`,
+    updatedAt: '2026-11-25T16:00:00+08:00',
+    updatedBy: 'admin',
+  },
+]
+
 /** 平台评测器目录：包含内置标准评测器与自定义业务评测器 */
 export const evaluators: Evaluator[] = [
   {
@@ -166,31 +230,5 @@ export const evaluators: Evaluator[] = [
     updatedAt: '2026-11-19T16:00:00+08:00',
     updatedBy: 'admin',
   },
-  {
-    id: 'custom-power-forecast',
-    name: '新能源功率预测考核评测器',
-    version: 'v0.5.0',
-    kind: 'custom',
-    task: 'power-forecast',
-    status: 'ready',
-    description: '按新能源场站装机容量归一化计算功率预测 RMSE、MAE 与考核准确率，适用于风电/光伏短期及超短期功率预测算法。',
-    entrypoint: 'evaluators/power_forecast.py:evaluate_power',
-    runtime: 'Python 3.12 · NumPy 2.x',
-    supportedMetrics: [
-      { key: 'accuracy_rate', label: '预测准确率', higherIsBetter: true, unit: '%', primary: true },
-      { key: 'rmse', label: '归一化 RMSE', higherIsBetter: false, unit: '%' },
-      { key: 'mae', label: '归一化 MAE', higherIsBetter: false, unit: '%' },
-    ],
-    config: [
-      { key: 'capacity_mw', label: '装机容量（MW）', type: 'number', value: 100, desc: '用于归一化功率误差的场站额定容量' },
-      { key: 'window_hours', label: '考核时间窗口（h）', type: 'number', value: 24, desc: '单次预测滚动考核时长' },
-    ],
-    script: `def evaluate_power(y_true, y_pred, capacity_mw=100.0):
-    n = max(1, len(y_true))
-    rmse = (sum(((a - b) / capacity_mw) ** 2 for a, b in zip(y_true, y_pred)) / n) ** 0.5
-    mae = sum(abs(a - b) / capacity_mw for a, b in zip(y_true, y_pred)) / n
-    return {"accuracy_rate": round(max(0.0, (1.0 - rmse) * 100), 2), "rmse": round(rmse * 100, 2), "mae": round(mae * 100, 2)}`,
-    updatedAt: '2026-11-20T10:30:00+08:00',
-    updatedBy: 'admin',
-  },
+  ...STD_SERIES_EVALUATORS,
 ]

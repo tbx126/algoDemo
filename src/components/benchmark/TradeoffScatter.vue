@@ -85,7 +85,7 @@ const labelled = computed(() => new Set([...pareto.value.map((p) => p.id), ...pr
       :style="{ left: `${(sx(hover.x) / W) * 100}%`, top: `${(sy(hover.y) / H) * 100}%`, transform: 'translate(-50%, calc(-100% - 12px))' }"
     >
       <p class="mono font-medium">{{ hover.label }}</p>
-      <p class="text-gray-500">{{ yLabel }} <span class="text-gray-900 dark:text-white">{{ hover.y.toFixed(2) }}</span> · {{ xLabel }} <span class="text-gray-900 dark:text-white">{{ hover.x.toFixed(1) }}</span></p>
+      <p class="text-gray-500">{{ yLabel }} <span class="text-gray-900 dark:text-white">{{ hover.y.toFixed(2) }}</span> · {{ xLabel }} <span class="text-gray-900 dark:text-white">{{ hover.x < 1 ? hover.x.toFixed(3) : hover.x.toFixed(1) }}</span></p>
     </div>
   </div>
 </template>

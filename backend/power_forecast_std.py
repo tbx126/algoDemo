@@ -239,6 +239,7 @@ def evaluate(
     raw, y, metas, specs = load_split(data_dir, "test")
     say(30, f"[runner] 挂载 {data_dir.name}@v1.0/test：{len(metas)} 个日前预测窗口（标准 {TASK}），共 {y.size:,} 个逐小时真值；算法只接收输入与场站规格")
 
+    predict_batch(raw[:2].copy(), [dict(s) for s in specs[:2]])  # 预热：首次调用的模型加载与 CUDA 初始化不计入推理耗时
     t_inf = time.perf_counter()
     pred = np.asarray(predict_batch(raw.copy(), [dict(s) for s in specs]), dtype=np.float64)
     infer_ms = (time.perf_counter() - t_inf) * 1000

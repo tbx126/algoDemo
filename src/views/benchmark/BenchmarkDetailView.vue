@@ -7,6 +7,7 @@ import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { fmtDate, fmtMetric, timeAgo } from '@/utils/format'
 import { algoFullLabel, algoName, orgLabel } from '@/utils/display'
+import { isSeriesTask, latencyLabel, sampleNoun } from '@/utils/meta'
 import type { EvaluatorParamDef } from '@/types'
 import StateView from '@/components/ui/StateView.vue'
 import EditBenchmarkModal from '@/components/admin/EditBenchmarkModal.vue'
@@ -86,6 +87,8 @@ const compareItems = computed(() =>
     .filter(Boolean)
     .map((r) => ({ id: rowKey(r!), label: `${algoName(r!.algorithm)} ${r!.run.algoVersion}`, values: r!.run.metrics })),
 )
+/** 排行榜中实际出现的评测硬件（按评测记录统计，不写死） */
+const hardwareText = computed(() => [...new Set((rows.value ?? []).map((r) => r.run.hardware).filter(Boolean))].join('、') || '—')
 const scatterPts = computed(() =>
   (rows.value ?? [])
     .map((r) => ({ r, lat: r.run.metrics.latency_ms ?? r.run.latencyMs }))
@@ -186,9 +189,9 @@ const scatterPts = computed(() =>
 
         <!-- 精度/速度 -->
         <div v-else-if="tab === 'chart'" class="card p-5">
-          <h2 class="section-title">{{ primary!.label }} 与单图耗时</h2>
-          <p class="mt-1 mb-4 text-sm text-gray-500">虚线为帕累托前沿（同等耗时下精度最高）。点击点可加入/移出对比。硬件：RTX 4060 Laptop。</p>
-          <TradeoffScatter v-if="scatterPts.length" :points="scatterPts" x-label="单图耗时 ms" :y-label="primary!.label" :y-unit="primary!.unit" @toggle="toggle" />
+          <h2 class="section-title">{{ primary!.label }} 与{{ latencyLabel(b.task) }}</h2>
+          <p class="mt-1 mb-4 text-sm text-gray-500">横轴为平均每个{{ sampleNoun(b.task) }}的推理耗时；虚线为帕累托前沿（同等耗时下精度最高）。点击点可加入/移出对比。评测硬件：{{ hardwareText }}。</p>
+          <TradeoffScatter v-if="scatterPts.length" :points="scatterPts" :x-label="`${latencyLabel(b.task)} ms`" :y-label="primary!.label" :y-unit="primary!.unit" @toggle="toggle" />
           <p v-else class="text-sm text-gray-500">暂无数据</p>
         </div>
 
@@ -216,7 +219,13 @@ const scatterPts = computed(() =>
             </div>
             <div class="card space-y-3 p-5 text-sm">
               <h2 class="section-title">评测流程</h2>
-              <ol class="list-inside list-decimal space-y-1.5 text-gray-600 dark:text-gray-400">
+              <ol v-if="isSeriesTask(b.task)" class="list-inside list-decimal space-y-1.5 text-gray-600 dark:text-gray-400">
+                <li>评测器读取 <code class="mono">{{ b.datasetId }}@{{ b.datasetVersion }}</code> 测试集 <code class="mono">series/</code> 下的全部时序窗口（labels.csv 真值留在评测器内）。</li>
+                <li>按标准接口调用算法 <code class="mono">predict_batch(输入窗口, 场站 / 机器规格)</code>，算法只拿到输入，拿不到真值。</li>
+                <li>评测器 <code class="mono">{{ b.evaluator }}@{{ b.evaluatorVersion }}</code> 校验输出形状后计算指标<template v-if="b.task === 'server-fault'">，并做因果性检查（改动未来数据不得影响过去的输出）</template><template v-else>，并给出持续法与 NWP 名义曲线两个参照基线</template>。</li>
+                <li>记录代码与权重摘要、参数、硬件与实测耗时，保证可复现。</li>
+              </ol>
+              <ol v-else class="list-inside list-decimal space-y-1.5 text-gray-600 dark:text-gray-400">
                 <li>算法容器以 <code class="mono">batch</code> 模式启动，<b>断网</b>，按声明限制 CPU / 内存 / 显存。</li>
                 <li>只读挂载 <code class="mono">{{ b.datasetId }}@{{ b.datasetVersion }}</code> 测试集的 <code class="mono">images/</code>（不挂载 labels.csv）。</li>
                 <li>容器输出 <code class="mono">predictions.json</code> 后退出。</li>

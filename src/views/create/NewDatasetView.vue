@@ -6,7 +6,7 @@ import { ApiError, createDataset, listDatasets, uploadDatasetPart, validateDatas
 import { useAsync } from '@/utils/useAsync'
 import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
-import { TASKS } from '@/utils/meta'
+import { TASKS, isImageTask, isSeriesTask } from '@/utils/meta'
 import { fmtBytes, hashStr } from '@/utils/format'
 import { checkLabels, labelSpec, parseCsv, rowsFor, toCsv, type CheckItem } from '@/utils/labels'
 import type { SplitName, TaskType } from '@/types'
@@ -98,6 +98,10 @@ function pickCsv(file?: File) {
   r.readAsArrayBuffer(file)
 }
 
+/** 数据目录：图像任务为 images/，时序标准任务为 series/ */
+const dataDir = computed(() => (isSeriesTask(task.value) ? 'series/' : 'images/'))
+const dataKind = computed(() => (isImageTask(task.value) ? '图片' : isSeriesTask(task.value) ? '时序 CSV 窗口' : '数据文件'))
+
 // ---------- 校验 ----------
 const validating = ref(false)
 const checks = computed<CheckItem[]>(() => {
@@ -111,9 +115,9 @@ const checks = computed<CheckItem[]>(() => {
   }
   const fi = header.indexOf('file_name')
   const files = fi >= 0 ? new Set(rows.map((r) => r[fi])).size : 0
-  out.push({ level: 'ok', text: `labels.csv 引用的 ${files} 个文件均存在于 images/` })
+  out.push({ level: 'ok', text: `labels.csv 引用的 ${files} 个文件均存在于 ${dataDir.value}` })
   if (task.value.includes('segmentation')) out.push({ level: 'ok', text: 'mask_file 引用的掩码均存在于 masks/' })
-  if (otherPart.value) out.push({ level: 'ok', text: `与${part.value === 'train' ? '测试集' : '训练集'} ${otherPart.value.versions[0].version} 按图片哈希比对：0 个重复文件` })
+  if (otherPart.value) out.push({ level: 'ok', text: `与${part.value === 'train' ? '测试集' : '训练集'} ${otherPart.value.versions[0].version} 按${isImageTask(task.value) ? '图片' : '文件'}哈希比对：0 个重复文件` })
   return out
 })
 const errorCount = computed(() => checks.value.filter((c) => c.level === 'error').length)
@@ -237,7 +241,7 @@ async function fillExample() {
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div class="min-w-0 flex-1">
         <h1 class="flex items-center gap-2 text-2xl font-semibold text-gray-900 dark:text-white"><Database class="size-6 text-brand-600" />上传数据集</h1>
-        <p class="mt-1 text-sm text-gray-500">每个数据集分为训练集和测试集，分开上传、各自有版本。两部分结构一致：<code class="mono">images/</code> 存放数据，<code class="mono">labels.csv</code> 存放真值。</p>
+        <p class="mt-1 text-sm text-gray-500">每个数据集分为训练集和测试集，分开上传、各自有版本。两部分结构一致：<code class="mono">images/</code>（图像任务）或 <code class="mono">series/</code>（时序任务）存放数据，<code class="mono">labels.csv</code> 存放真值。</p>
       </div>
       <button v-if="can.admin" type="button" class="btn-default shrink-0" @click="fillExample">
         <Sparkles class="size-4 text-amber-500" />一键填写示例数据
@@ -301,6 +305,10 @@ async function fillExample() {
 
         <!-- 1 上传数据 -->
         <template v-else-if="step === 1">
+          <p v-if="isSeriesTask(task)" class="flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+            <TriangleAlert class="mt-0.5 size-3.5 shrink-0" />
+            <span>{{ TASKS[task].label }}是时序标准任务，由标准统一评测器评测：数据集除 series/ 与 labels.csv 外还需要标准 meta.json（场站或机器规格、评测基准）。这里可以下载标准示例包并校验文件格式，但自助上传暂不支持发布为可评测的标准数据集，请按标准准备后联系管理员接入。</span>
+          </p>
           <div class="grid gap-5 lg:grid-cols-2">
             <div>
               <div class="mb-1 flex items-center justify-between">
@@ -310,7 +318,7 @@ async function fillExample() {
                 </a>
               </div>
               <pre class="rounded-lg bg-gray-50 p-3 text-xs leading-relaxed dark:bg-gray-800/60">{{ `${part}.zip
-├── images/          # ${spec.dataExt === 'jpg' ? '图片' : '数据文件'}${task === 'image-dehazing' ? '\n├── clear/           # 清晰真值图' : ''}${task.includes('segmentation') ? '\n├── masks/           # 掩码 PNG' : ''}
+├── ${dataDir.padEnd(17)}# ${dataKind}${task === 'image-dehazing' ? '\n├── clear/           # 清晰真值图' : ''}${task.includes('segmentation') ? '\n├── masks/           # 掩码 PNG' : ''}
 └── labels.csv       # 真值（UTF-8）` }}</pre>
               <p class="label mt-4">labels.csv 表头</p>
               <pre class="mono overflow-x-auto rounded-lg bg-gray-900 p-3 text-xs text-gray-100">{{ columns.join(',') }}</pre>
@@ -324,7 +332,7 @@ async function fillExample() {
             <div class="space-y-4">
               <div>
                 <p class="label">数据包<span class="ml-0.5 text-rose-500">*</span></p>
-                <FakeUpload v-model="f.zip" accept=".zip" :label="`拖拽 ${part}.zip 到这里，或点击选择`" hint="标准 .zip 数据包，下一步将由后端真实解压并逐张校验图片与 labels.csv" />
+                <FakeUpload v-model="f.zip" accept=".zip" :label="`拖拽 ${part}.zip 到这里，或点击选择`" :hint="`标准 .zip 数据包，下一步将由后端真实解压并逐个校验${dataKind}与 labels.csv`" />
               </div>
               <div class="rounded-lg border border-dashed border-gray-200 p-3 dark:border-gray-700">
                 <p class="flex items-center gap-1.5 text-sm font-medium"><FileSpreadsheet class="size-4 text-emerald-600" />用真实的 labels.csv 校验（可选）</p>
@@ -390,7 +398,7 @@ async function fillExample() {
           <TextField v-model="f.note" label="版本说明" />
           <p class="flex items-start gap-1.5 rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-gray-800/60 dark:text-gray-400">
             <Lock class="mt-0.5 size-3.5 shrink-0" />
-            <template v-if="part === 'test'">测试集发布后仅管理员可查看与下载；评测时算法容器只挂载 images/，labels.csv 留在平台侧计算指标。</template>
+            <template v-if="part === 'test'">测试集发布后仅管理员可查看与下载；评测时算法只拿到 {{ dataDir }} 下的输入，labels.csv 留在平台侧计算指标。</template>
             <template v-else>训练集发布后所有账号可查看与下载。{{ f.mode === 'new' ? '测试集请在数据集创建后单独上传。' : '' }}</template>
           </p>
         </template>

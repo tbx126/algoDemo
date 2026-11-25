@@ -31,6 +31,9 @@ from typing import Any, Callable
 import numpy as np
 from PIL import Image, ImageDraw
 
+import power_forecast_std as pstd
+import server_fault_std as sfstd
+
 from dehaze_registry import (
     DEHAZE_ALGOS,
     DEHAZE_DATA_DIR,
@@ -57,6 +60,21 @@ CUSTOM_EVALUATORS_ROOT = ROOT / "models" / "custom_evaluators"
 CUSTOM_STATE_PATH = ROOT / "state" / "custom_state.json"
 
 _CUSTOM_LOCK = threading.Lock()
+
+# 时序标准任务：数据是 CSV 时序窗口，算法接口为 predict_batch，由各自标准的统一评测器评测
+SERIES_TASKS = ("power-forecast", "server-fault")
+# 非图像任务：不能用图片校验数据、也不能用图片做冒烟测试
+NON_IMAGE_TASKS = ("power-forecast", "server-fault", "signal-processing", "optimization")
+_SERIES_STD = {"power-forecast": pstd, "server-fault": sfstd}
+_SERIES_SAMPLE_DIRS = {
+    "power-forecast": ROOT / "data" / "wind-solar-power-dataset",
+    "server-fault": ROOT / "data" / "server-telemetry-sim",
+}
+SERIES_UPLOAD_NOTICE = (
+    "时序标准任务（功率预测 / 服务器故障检测）由各自标准的统一评测器评测："
+    "数据集还需要标准 meta.json（场站或机器规格、评测基准），算法需实现标准接口 predict_batch。"
+    "自助上传流程暂不支持把它们发布为可评测的标准数据集 / 算法，请按标准文档准备后联系管理员接入。"
+)
 _PREDICTOR_CACHE: dict[str, tuple[Any, float]] = {}
 
 REQUIRED_COLUMNS_BY_TASK: dict[str, list[str]] = {
@@ -67,7 +85,8 @@ REQUIRED_COLUMNS_BY_TASK: dict[str, list[str]] = {
     "ocr": ["file_name", "text"],
     "semantic-segmentation": ["file_name", "mask_file"],
     "instance-segmentation": ["file_name", "mask_file"],
-    "power-forecast": ["file_name", "value"],
+    "power-forecast": list(pstd.LABEL_COLUMNS),
+    "server-fault": list(sfstd.LABEL_COLUMNS),
     "signal-processing": ["file_name", "label"],
     "optimization": ["file_name", "best_known"],
     "custom": ["file_name", "label"],
@@ -229,10 +248,11 @@ def validate_dataset_zip(
         unique_files: set[str] = set()
         missing_files: list[str] = []
         broken_images: list[str] = []
+        broken_series: list[str] = []
         missing_clears: list[str] = []
         class_counts: dict[str, int] = {}
         unknown_labels: set[str] = set()
-        is_image_task = task not in ("power-forecast", "signal-processing", "optimization")
+        is_image_task = task not in NON_IMAGE_TASKS
 
         for r in data_rows:
             if fi >= 0 and fi < len(r):
@@ -242,6 +262,11 @@ def validate_dataset_zip(
                     fp = tmp / rel
                     if not fp.exists():
                         missing_files.append(rel)
+                    elif task in SERIES_TASKS:
+                        try:
+                            _SERIES_STD[task].read_series(fp)
+                        except Exception:
+                            broken_series.append(rel)
                     elif is_image_task:
                         try:
                             with Image.open(fp) as im:
@@ -280,6 +305,13 @@ def validate_dataset_zip(
             checks.append({"level": "error", "text": f"发现 {len(broken_images)} 张损坏图片（如 {broken_images[0]}）"})
         elif is_image_task and unique_files:
             checks.append({"level": "ok", "text": "全部图片通过 Pillow 完整性校验"})
+
+        if task in SERIES_TASKS and unique_files:
+            if broken_series:
+                checks.append({"level": "error", "text": f"有 {len(broken_series)} 个时序 CSV 不符合标准格式（如 {broken_series[0]}），需要的列：{', '.join(_SERIES_STD[task].SERIES_COLUMNS if task == 'server-fault' else pstd.CHANNELS)}"})
+            else:
+                checks.append({"level": "ok", "text": f"全部 {len(unique_files)} 个时序 CSV 符合标准格式"})
+            checks.append({"level": "error", "text": SERIES_UPLOAD_NOTICE})
 
         if unknown_labels:
             checks.append({"level": "warn", "text": f"labels.csv 包含未在类别表中声明的标签：{', '.join(sorted(unknown_labels)[:5])}"})
@@ -576,6 +608,10 @@ def _normalize_predict_output(task: str, raw_out: Any, lat_ms: float, queued_ms:
 
 
 def validate_algorithm_package(filename: str, pkg_bytes: bytes, task: str) -> dict:
+    # 非图像任务：自助上传流程的冒烟测试只会喂入图片，无法验证这类算法，直接说明
+    if task in NON_IMAGE_TASKS:
+        note = SERIES_UPLOAD_NOTICE if task in SERIES_TASKS else f"「{task}」任务的输入不是图片，自助上传流程目前只能对图像类算法做冒烟测试与评测，请联系管理员接入。"
+        return {"ok": False, "checks": [{"level": "error", "text": note}], "files": []}
     checks: list[dict[str, str]] = []
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
@@ -1231,6 +1267,21 @@ def build_template_dataset_zip(task: str, part: str = "train") -> bytes:
                 zf.writestr(hf, (src / hf).read_bytes())
                 w.writerow([hf, r["text"], r.get("category", ""), r.get("source_receipt", "")])
             zf.writestr("labels.csv", csv_buf.getvalue().encode("utf-8"))
+        elif task in SERIES_TASKS and (_SERIES_SAMPLE_DIRS[task] / "train" / "labels.csv").exists():
+            std = _SERIES_STD[task]
+            src = _SERIES_SAMPLE_DIRS[task] / "train"
+            rows = std.read_labels(_SERIES_SAMPLE_DIRS[task], "train")
+            slice_rows = rows[:8] if part == "train" else rows[8:14]
+            csv_buf = io.StringIO()
+            w = csv.DictWriter(csv_buf, fieldnames=list(std.LABEL_COLUMNS))
+            w.writeheader()
+            for r in slice_rows:
+                zf.writestr(r["file_name"], (src / r["file_name"]).read_bytes())
+                w.writerow({k: r[k] for k in std.LABEL_COLUMNS})
+            zf.writestr("labels.csv", csv_buf.getvalue().encode("utf-8"))
+            meta = std.read_meta(_SERIES_SAMPLE_DIRS[task]) or {}
+            spec_key = "stations" if task == "power-forecast" else "machines"
+            zf.writestr("meta.example.json", json.dumps({"task": task, spec_key: meta.get(spec_key, {})}, ensure_ascii=False, indent=2).encode("utf-8"))
         else:
             # 通用合成标准图像包（支持 object-detection / classification / custom）
             csv_buf = io.StringIO()
@@ -1257,8 +1308,61 @@ def build_template_dataset_zip(task: str, part: str = "train") -> bytes:
     return buf.getvalue()
 
 
+_SERIES_ALGO_TEMPLATES = {
+    "power-forecast": '''"""新能源功率预测标准（power_forecast_std）算法接口模板
+
+平台调用方式：predict_batch(raw, specs)
+  raw   : numpy 数组 [N, 24, 9]，列顺序为
+          hour, wind_speed_ms, irradiance_wm2, temp_c, humidity_pct, pressure_hpa, nwp_wind_ms, nwp_irr_wm2, power_mw
+          第 h 行 = 前一天 h 时实测 + 次日 h 时 NWP 预报
+  specs : 长度 N 的列表，每项 {"kind": "wind" | "solar", "capacity_mw": float}
+返回    : numpy 数组 [N, 24]，次日 0~23 时逐小时功率（MW）
+算法拿不到真值；评测由平台统一评测器完成。
+"""
+import numpy as np
+
+
+def predict_batch(raw: np.ndarray, specs: list[dict]) -> np.ndarray:
+    raw = np.asarray(raw, dtype=np.float32)
+    out = np.zeros(raw.shape[:2], dtype=np.float32)
+    for i, sp in enumerate(specs):
+        cap = sp["capacity_mw"]
+        if sp["kind"] == "wind":
+            v = raw[i, :, 6]
+            p = np.where((v < 3) | (v > 25), 0.0, np.where(v >= 12, 1.0, ((np.clip(v, 3, 12) - 3) / 9.0) ** 3))
+        else:
+            p = np.clip(raw[i, :, 7] / 1000.0 * 0.9, 0.0, 1.0)
+        out[i] = cap * p  # 示例：NWP 代入名义功率曲线
+    return out
+''',
+    "server-fault": '''"""服务器故障检测标准（server_fault_std）算法接口模板
+
+平台调用方式：predict_batch(raw, specs)
+  raw   : numpy 数组 [N, 60, 8]，列顺序为
+          cpu_pct, cpu_temp_c, mem_pct, gpu_pct, gpu_temp_c, gpu_mem_pct, disk_io_mbps, net_mbps
+  specs : 长度 N 的列表，每项至少含 {"disk_max_mbps": float, "net_max_mbps": float}
+返回    : {"fault_prob": [N, 60], 可选 "state": [N, 60] 标准状态码, 可选 "warn_prob": [N, 60]}
+第 t 分钟的输出只能使用第 0..t 分钟的数据（评测器会做因果性检查）。
+"""
+import numpy as np
+
+
+def predict_batch(raw: np.ndarray, specs: list[dict]) -> dict:
+    raw = np.asarray(raw, dtype=np.float32)
+    cpu = raw[:, :, 0] / 100.0
+    return {"fault_prob": np.clip((cpu - 0.85) / 0.15, 0.0, 1.0)}  # 示例：只看当前分钟的 CPU 利用率
+''',
+}
+
+
 def build_template_algorithm_zip(task: str) -> bytes:
     """生成符合平台标准契约、可直接上传并通过冒烟测试与真实评测的算法包 ZIP"""
+    if task in _SERIES_ALGO_TEMPLATES:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("algorithm.py", _SERIES_ALGO_TEMPLATES[task].encode("utf-8"))
+            zf.writestr("README.md", (f"# {task} 标准算法模板\n\n实现 `algorithm.py` 中的 `predict_batch` 标准接口。\n\n" + SERIES_UPLOAD_NOTICE + "\n").encode("utf-8"))
+        return buf.getvalue()
     if task == "image-dehazing":
         code = '''"""标准图像去雾算法模板（可直接上传并通过冒烟测试与 PSNR/SSIM 真实评测）"""
 import io

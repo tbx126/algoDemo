@@ -34,7 +34,7 @@ async function save() {
 </script>
 
 <template>
-  <Modal v-model:open="open" :title="`编辑数据集 · ${ds.id}`" description="修改简介、标签、类别表与数据集卡片。图片与 labels.csv 需通过上传新版本更新。" width="max-w-2xl">
+  <Modal v-model:open="open" :title="`编辑数据集 · ${ds.id}`" description="修改简介、标签、类别表与数据集卡片。数据文件与 labels.csv 需通过上传新版本更新。" width="max-w-2xl">
     <form id="edit-ds" class="space-y-4" @submit.prevent="save">
       <div>
         <label class="label" for="ed-sum">简介</label>

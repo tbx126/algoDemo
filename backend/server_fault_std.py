@@ -317,6 +317,7 @@ def evaluate(
     specs = load_specs(data_dir, metas)
     say(30, f"[runner] 挂载 {data_dir.name}@v1.0/test：{len(metas)} 个 60 分钟 × 8 通道窗口（标准 {TASK}），共 {Y.size:,} 个逐分钟真值")
 
+    predict_batch(RAW[:2].copy(), specs[:2])  # 预热：首次调用的模型加载与 CUDA 初始化不计入推理耗时
     t_inf = time.perf_counter()
     out = predict_batch(RAW, specs)
     infer_ms = (time.perf_counter() - t_inf) * 1000

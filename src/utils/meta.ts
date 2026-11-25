@@ -26,6 +26,18 @@ export const BUSINESS_CATEGORIES: Record<BusinessCategory, { label: string; colo
   other: { label: '其他', color: 'text-slate-600 dark:text-slate-400', chip: 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300' },
 }
 
+/** 时序标准任务：数据为 CSV 时序窗口，由各自标准的统一评测器在进程内调用 predict_batch 评测 */
+export const SERIES_TASKS: readonly TaskType[] = ['power-forecast', 'server-fault']
+/** 非图像任务（数据不是图片） */
+export const NON_IMAGE_TASKS: readonly TaskType[] = ['power-forecast', 'server-fault', 'signal-processing', 'optimization']
+export const isSeriesTask = (t?: string | null) => !!t && (SERIES_TASKS as readonly string[]).includes(t)
+/** 是否确定为图像任务（自定义任务不确定，按非图像处理文字） */
+export const isImageTask = (t?: string | null) => !!t && t !== 'custom' && !(NON_IMAGE_TASKS as readonly string[]).includes(t)
+/** 单个样本的叫法：图像任务为「图」，时序标准任务为「窗口」，其他为「样本」 */
+export const sampleNoun = (t?: string | null) => (isImageTask(t) ? '图' : isSeriesTask(t) ? '窗口' : '样本')
+/** 平均推理耗时的标签，如「单图耗时」「单窗口耗时」 */
+export const latencyLabel = (t?: string | null) => `单${sampleNoun(t)}耗时`
+
 /** 内置评测器 & 原生渲染支持的任务 */
 export const BUILTIN_TASKS: TaskType[] = ['image-classification', 'image-dehazing', 'object-detection', 'semantic-segmentation', 'ocr']
 

@@ -35,6 +35,8 @@ export function fmtDate(iso: string): string {
 
 export function fmtDuration(sec?: number): string {
   if (sec == null) return '—'
+  if (sec < 1) return `${Math.max(1, Math.round(sec * 1000))} 毫秒`
+  if (sec < 10) return `${sec.toFixed(1)} 秒`
   if (sec < 60) return `${Math.round(sec)} 秒`
   const m = Math.floor(sec / 60)
   if (m < 60) return `${m} 分 ${Math.round(sec % 60)} 秒`

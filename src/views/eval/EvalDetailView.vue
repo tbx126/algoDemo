@@ -8,6 +8,7 @@ import { useSession } from '@/stores/session'
 import { toast } from '@/stores/toast'
 import { fmtDate, fmtDuration, fmtMetric, hashStr } from '@/utils/format'
 import { algoFullLabel } from '@/utils/display'
+import { isImageTask, latencyLabel } from '@/utils/meta'
 import { datasets } from '@/mock/datasets'
 import StateView from '@/components/ui/StateView.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
@@ -53,6 +54,20 @@ const benchId = computed(() => run.value?.benchmarkId ?? '')
 const { data: bench } = useAsync(async () => (benchId.value ? getBenchmark(benchId.value) : undefined), [benchId])
 const ds = computed(() => datasets.find((d) => d.id === bench.value?.datasetId))
 const primary = computed(() => bench.value?.metrics.find((m) => m.primary))
+const task = computed(() => bench.value?.task ?? ds.value?.task)
+
+/** 下载本次评测结果（指标、分类别结果、参数、日志与可视化数据）为 JSON */
+function downloadResult() {
+  if (!run.value) return
+  const blob = new Blob([JSON.stringify(run.value, null, 2)], { type: 'application/json' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `${run.value.id}.json`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+}
 
 // 指标卡片自适应列数：1~7 个指标在桌面端单行铺满，8 个指标 4×2 对称排布，避免第二行落单
 const metricsGridClass = computed(() => {
@@ -196,7 +211,7 @@ async function rerun() {
           </div>
 
           <!-- 错误样例 -->
-          <div v-if="can.testAccess && ds && run.status === 'succeeded' && !['signal-processing', 'optimization', 'power-forecast', 'server-fault'].includes(ds.task)" class="card p-5">
+          <div v-if="can.testAccess && ds && run.status === 'succeeded' && isImageTask(task)" class="card p-5">
             <h2 class="section-title mb-1">错误样例</h2>
             <p class="mb-4 text-xs text-gray-500">
               来自测试集，仅管理员可见<template v-if="run.errorSamples">（展示 {{ run.errorSamples.length }} 个真实误判样本）</template>
@@ -260,11 +275,11 @@ async function rerun() {
           </div>
           <div class="card space-y-2 p-5 text-sm">
             <div class="flex justify-between"><span class="flex items-center gap-1 text-gray-500"><Clock class="size-3.5" />总耗时</span><span>{{ fmtDuration(run.durationSec) }}</span></div>
-            <div class="flex justify-between"><span class="flex items-center gap-1 text-gray-500"><Gauge class="size-3.5" />单图耗时</span><span>{{ run.latencyMs != null ? run.latencyMs + ' ms' : '—' }}</span></div>
-            <div class="flex justify-between"><span class="flex items-center gap-1 text-gray-500"><Cpu class="size-3.5" />峰值显存</span><span>{{ run.peakGpuMemGB != null ? run.peakGpuMemGB + ' GB' : '—' }}</span></div>
+            <div class="flex justify-between"><span class="flex items-center gap-1 text-gray-500"><Gauge class="size-3.5" />{{ latencyLabel(task) }}</span><span>{{ run.latencyMs != null ? run.latencyMs + ' ms' : '—' }}</span></div>
+            <div class="flex justify-between"><span class="flex items-center gap-1 text-gray-500"><Cpu class="size-3.5" />峰值显存</span><span :title="run.peakGpuMemGB == null ? '纯 CPU 运行或未测量' : undefined">{{ run.peakGpuMemGB != null ? run.peakGpuMemGB + ' GB' : run.hardware?.startsWith('CPU') ? '—（CPU 运行）' : '—' }}</span></div>
             <div class="flex justify-between"><span class="text-gray-500">开始</span><span>{{ run.startedAt ? fmtDate(run.startedAt) : '—' }}</span></div>
             <div class="flex justify-between"><span class="text-gray-500">结束</span><span>{{ run.finishedAt ? fmtDate(run.finishedAt) : '—' }}</span></div>
-            <button v-if="run.status === 'succeeded' && can.runEval" class="btn-default mt-2 w-full" @click="toast('predictions.json 下载链接已生成（模拟）')"><FileJson class="size-4" />下载原始预测</button>
+            <button v-if="run.status === 'succeeded' && can.runEval" class="btn-default mt-2 w-full" @click="downloadResult"><FileJson class="size-4" />下载评测结果 JSON</button>
           </div>
         </aside>
       </div>

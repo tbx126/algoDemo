@@ -19,11 +19,15 @@ from pathlib import Path
 from types import ModuleType
 from typing import Literal
 
+import hashlib
+
 import numpy as np
+import torch
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 import server_fault_tcn
+from eval_lock import EVAL_LOCK
 import server_fault_std as std
 
 ROOT = Path(__file__).resolve().parent
@@ -42,6 +46,19 @@ _TZ = timezone(timedelta(hours=8))
 
 def _now() -> str:
     return datetime.now(_TZ).isoformat(timespec="seconds")
+
+
+def _digest(mod: ModuleType) -> str:
+    """构建产物摘要：算法代码 + 权重文件的 SHA-256"""
+    h = hashlib.sha256()
+    for p in (Path(mod.__file__), mod.WEIGHT_PATH):
+        if p.exists():
+            h.update(p.read_bytes())
+    return "sha256:" + h.hexdigest()
+
+
+def _weights_hash(mod: ModuleType) -> str:
+    return "sha256:" + hashlib.sha256(mod.WEIGHT_PATH.read_bytes()).hexdigest()[:16] if mod.WEIGHT_PATH.exists() else ""
 
 
 # ================================================================== 数据集与基准发现
@@ -199,7 +216,12 @@ def _run_eval(eval_id: str, algo_id: str, bench_id: str) -> None:
         _update(eval_id, status="running", startedAt=_now(), progress=5)
         _update(eval_id, progress=10, log=f"[runner] 加载 {algo_id}@v1.0.0（{mod.device_label()}），按服务器故障检测标准接口 predict_batch 调用")
         state = mod.load_state() or {}
-        res = std.evaluate(mod.predict_batch, d, history=state.get("history"), say=lambda p, m: _update(eval_id, progress=p, log=m))
+        uses_gpu = torch.cuda.is_available() and not mod.device_label().startswith("CPU")
+        with EVAL_LOCK:  # 与其他标准的评测串行执行，显存峰值只计本次评测
+            if uses_gpu:
+                torch.cuda.reset_peak_memory_stats()
+            res = std.evaluate(mod.predict_batch, d, history=state.get("history"), say=lambda p, m: _update(eval_id, progress=p, log=m))
+            peak_gb = round(torch.cuda.max_memory_allocated() / 1024 ** 3, 3) if uses_gpu else None
         m = res["metrics"]
         with _LOCK:
             evals = _load_evals()
@@ -217,7 +239,7 @@ def _run_eval(eval_id: str, algo_id: str, bench_id: str) -> None:
                         "perClassLabel": res["perClassLabel"],
                         "durationSec": res["durationSec"],
                         "latencyMs": res["latencyMs"],
-                        "peakGpuMemGB": mod.CARD.get("gpuMem", 0.1),
+                        "peakGpuMemGB": peak_gb,
                         "isLatestValid": True,
                         "vizServerFault": {**res["vizServerFault"], "bestEpoch": state.get("best_epoch")},
                     })
@@ -249,8 +271,8 @@ def trigger_eval_sf(algorithm_id: str, algo_version: str, benchmark_id: str, sub
             "submittedBy": submitted_by,
             "submittedAt": _now(),
             "metrics": {},
-            "imageDigest": mod.CARD["imageDigest"],
-            "weightsHash": mod.CARD["weightsHash"],
+            "imageDigest": _digest(mod),
+            "weightsHash": _weights_hash(mod),
             "evaluatorVersion": EVALUATOR_VERSION,
             "params": {"standard": std.TASK, "window_minutes": std.WINDOW, "threshold": 0.5, "min_fault_run": std.MIN_FAULT_RUN},
             "hardware": mod.device_label(),
@@ -351,8 +373,8 @@ runtime: Python 3.12 · PyTorch 2.x · NumPy
             "createdAt": trained,
             "createdBy": "admin",
             "changelog": card["changelog"],
-            "imageDigest": card["imageDigest"],
-            "weightsHash": card["weightsHash"],
+            "imageDigest": _digest(mod),
+            "weightsHash": _weights_hash(mod),
             "weightsSize": wbytes,
             "baseImage": "pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime",
             "gpuMem": card.get("gpuMem", 0.1),

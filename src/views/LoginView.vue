@@ -22,7 +22,7 @@ function submit() {
         <div class="flex items-center gap-2 text-lg font-semibold"><img src="/logo.png" alt="" class="size-8 rounded-md bg-white/95 object-contain p-0.5" />总部算法平台</div>
         <div>
           <p class="text-3xl leading-snug font-bold">同一份数据，同一套评测，<br />可比较、可复现的结果。</p>
-          <p class="mt-4 max-w-md text-sm text-gray-300">数据集与算法版本化管理 · 隔离容器评测 · 测试集标注不出平台 · 在线单图推理</p>
+          <p class="mt-4 max-w-md text-sm text-gray-300">数据集与算法版本化管理 · 隔离容器评测 · 测试集标注不出平台 · 在线推理</p>
         </div>
         <p class="text-xs text-gray-500">内部平台 · 账号由管理员开通</p>
       </div>

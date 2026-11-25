@@ -29,6 +29,7 @@ import {
   ZoomOut,
 } from 'lucide-vue-next'
 import { REAL_DS_IDS, listAlgorithms, listDatasets } from '@/api'
+import { NON_IMAGE_TASKS } from '@/utils/meta'
 import type { Algorithm, Dataset, TaskType } from '@/types'
 import { algoFullLabel } from '@/utils/display'
 import { useSession } from '@/stores/session'
@@ -94,9 +95,11 @@ const { user, state } = useSession()
 const allAlgos = ref<Algorithm[]>([])
 const allDatasets = ref<Dataset[]>([])
 
-const realDatasets = computed(() => allDatasets.value.filter((d) => REAL_DS_IDS.has(d.id) && d.test))
+// 编排实验的节点均为图像处理（预处理 / 图像算法 / 后处理），只提供图像类任务的数据集与算法
+const studioTask = (t: string) => !(NON_IMAGE_TASKS as readonly string[]).includes(t)
+const realDatasets = computed(() => allDatasets.value.filter((d) => REAL_DS_IDS.has(d.id) && d.test && studioTask(d.task)))
 const runnableAlgos = computed(() =>
-  allAlgos.value.filter((a) => a.versions.some((v) => v.status === 'ready')),
+  allAlgos.value.filter((a) => studioTask(a.task) && a.versions.some((v) => v.status === 'ready')),
 )
 
 // ==================== 节点组件库与输入/输出契约 ====================
