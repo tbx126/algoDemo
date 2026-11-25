@@ -225,24 +225,25 @@ const db = reactive(SOURCES)
 const REAL_ALGO_ID = 'Admin/cat-dog-classifier'
 const REAL_DEHAZE_IDS = new Set(['Admin/dehaze-dcp', 'Admin/dehaze-aodnet', 'Admin/dehaze-ffanet', 'Admin/dehaze-deanet'])
 const REAL_POWER_ALGO_ID = 'Admin/power-dlinear'
-const REAL_0X6E_ALGO_ID = 'Admin/0x6E'
 const REAL_RANDOM_ID = 'Admin/random'
-const REAL_0X07_ALGO_ID = 'Admin/0x07' // 服务器故障检测标准算法
-const REAL_ALGO_IDS = new Set([REAL_ALGO_ID, ...REAL_DEHAZE_IDS, REAL_POWER_ALGO_ID, REAL_0X6E_ALGO_ID, REAL_0X07_ALGO_ID, REAL_RANDOM_ID])
+const REAL_SF_ALGO_ID = 'Admin/server-fault-tcn' // 服务器故障检测标准算法
+const REAL_ALGO_IDS = new Set([REAL_ALGO_ID, ...REAL_DEHAZE_IDS, REAL_POWER_ALGO_ID, REAL_SF_ALGO_ID, REAL_RANDOM_ID])
 const LEGACY_REAL_ALGO_IDS = new Set(['Admin/dehaze'])
+/** 已下线的真实后端条目（算法 / 数据集 / 基准）：浏览器缓存中如有残留，同步时一并清除 */
+const REMOVED_REAL_IDS = new Set(['Admin/0x6E', 'Admin/0x6E-server-telemetry', '0x6E-server-fault-bench', 'Admin/0x07', 'Admin/0x07-server-telemetry-dataset', '0x07-server-fault-bench'])
+/** 改名的真实后端算法：区域下发与试用申请记录迁移到新 ID */
+const RENAMED_REAL_ALGO_IDS: Record<string, string> = { 'Admin/0x07': 'Admin/server-fault-tcn' }
 const REAL_DS_ID = 'Admin/cat-dog-dataset'
 const REAL_DEHAZE_DS_ID = 'Admin/dehaze-dataset'
 const REAL_OCR_DS_ID = 'Admin/sroie-ocr-dataset'
 const REAL_POWER_DS_ID = 'Admin/wind-solar-power-dataset'
-const REAL_0X07_DS_ID = 'Admin/0x07-server-telemetry-dataset' // 服务器故障检测标准数据集
-const REAL_0X6E_DS_ID = 'Admin/0x6E-server-telemetry'
-export const REAL_DS_IDS = new Set([REAL_DS_ID, REAL_DEHAZE_DS_ID, REAL_OCR_DS_ID, REAL_POWER_DS_ID, REAL_0X6E_DS_ID, REAL_0X07_DS_ID])
+const REAL_SF_DS_ID = 'Admin/server-telemetry-sim' // 服务器故障检测标准数据集（仿真）
+export const REAL_DS_IDS = new Set([REAL_DS_ID, REAL_DEHAZE_DS_ID, REAL_OCR_DS_ID, REAL_POWER_DS_ID, REAL_SF_DS_ID])
 const REAL_BENCH_ID = 'cat-dog-cls-bench'
 const REAL_DEHAZE_BENCH_ID = 'dehaze-bench'
 const REAL_POWER_BENCH_ID = 'power-forecast-bench'
-const REAL_0X07_BENCH_ID = '0x07-server-fault-bench' // 服务器故障检测标准基准
-const REAL_0X6E_BENCH_ID = '0x6E-server-fault-bench'
-const REAL_BENCH_IDS = new Set([REAL_BENCH_ID, REAL_DEHAZE_BENCH_ID, REAL_POWER_BENCH_ID, REAL_0X6E_BENCH_ID, REAL_0X07_BENCH_ID])
+const REAL_SF_BENCH_ID = 'server-fault-sim-bench' // 服务器故障检测标准基准（仿真）
+const REAL_BENCH_IDS = new Set([REAL_BENCH_ID, REAL_DEHAZE_BENCH_ID, REAL_POWER_BENCH_ID, REAL_SF_BENCH_ID])
 
 let realSynced = false
 let realBackendAvailable = false
@@ -311,6 +312,18 @@ function applyRealBootstrap(payload: {
     else db.benchmarks.unshift(bench)
   }
 
+  // 改名算法：区域下发与试用申请迁移到新 ID（去重）
+  for (const [from, to] of Object.entries(RENAMED_REAL_ALGO_IDS)) {
+    const have = new Set(db.dispatches.filter((d) => d.algorithmId === to).map((d) => d.region))
+    for (const d of db.dispatches) if (d.algorithmId === from && !have.has(d.region)) d.algorithmId = to
+    for (const t of db.trialRequests) if (t.algorithmId === from) t.algorithmId = to
+  }
+  // 清理已下线条目的缓存（算法 / 数据集 / 基准 / 评测 / 区域下发）
+  db.algorithms.splice(0, db.algorithms.length, ...db.algorithms.filter((a) => !REMOVED_REAL_IDS.has(a.id)))
+  db.datasets.splice(0, db.datasets.length, ...db.datasets.filter((d) => !REMOVED_REAL_IDS.has(d.id)))
+  db.benchmarks.splice(0, db.benchmarks.length, ...db.benchmarks.filter((b) => !REMOVED_REAL_IDS.has(b.id) && !REMOVED_REAL_IDS.has(b.datasetId)))
+  db.evals.splice(0, db.evals.length, ...db.evals.filter((e) => !REMOVED_REAL_IDS.has(e.algorithmId) && !REMOVED_REAL_IDS.has(e.benchmarkId)))
+  db.dispatches.splice(0, db.dispatches.length, ...db.dispatches.filter((d) => !REMOVED_REAL_IDS.has(d.algorithmId)))
   // 清理已拆分的旧版合并算法缓存（如 Admin/dehaze）
   for (let i = db.algorithms.length - 1; i >= 0; i--) {
     if (LEGACY_REAL_ALGO_IDS.has(db.algorithms[i].id)) db.algorithms.splice(i, 1)

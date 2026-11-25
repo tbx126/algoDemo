@@ -1,5 +1,7 @@
 """
-[0x07] 构建服务器运行故障检测时序数据集（Admin/0x07-server-telemetry-dataset）
+构建服务器运行故障检测仿真时序数据集（Admin/server-telemetry-sim）
+
+  注意：本数据集由物理与运维规律仿真生成，不是真实采集数据。
 
   - 模拟 8 台机房服务器（GPU 训练节点 ×3、Web 节点 ×2、数据库节点 ×2、缓存节点 ×1）的逐分钟运行遥测
   - 每条样本为 60 分钟、8 通道的多变量时序窗口（series/*.csv，60 行）：
@@ -13,7 +15,7 @@
       state_seq  60 个逐分钟状态编码（JSON）
       warn_seq   60 个逐分钟预警真值（JSON，1 = 未来 10 分钟内将发生故障）
   - 训练集 1,200 条 / 测试集 300 条，按不同随机种子与时段独立生成（无窗口重叠泄露）
-  - 输出目录：backend/data/0x07-server-telemetry-dataset/{train,test}/{series/*.csv,labels.csv}、zip 包与 meta.json
+  - 输出目录：backend/data/server-telemetry-sim/{train,test}/{series/*.csv,labels.csv}、zip 包与 meta.json
 """
 from __future__ import annotations
 
@@ -24,7 +26,7 @@ from pathlib import Path
 import server_fault_std as std
 
 ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data" / "0x07-server-telemetry-dataset"
+DATA_DIR = ROOT / "data" / "server-telemetry-sim"
 
 WINDOW = 60
 WARN_HORIZON = 10
@@ -182,14 +184,16 @@ def _make_split(split: str, count: int, seed: int) -> list[dict]:
         else:
             onset, duration, precursor = -1, 0, 1
         rows, states, warn = _simulate_window(rng, srv, fault, onset, duration, precursor)
-        fname = f"{split}_0x07_{srv['id']}_{i + 1:04d}.csv"
+        fname = f"{split}_sim_{srv['id']}_{i + 1:04d}.csv"
         std.write_series_csv(DATA_DIR / split / "series" / fname, rows)
         records.append(std.make_label_record(f"series/{fname}", srv["id"], srv["role"], states, warn, onset=onset if fault else None))
     std.write_labels(DATA_DIR / split / "labels.csv", records)
     return records
 
 
-README = """# 0x07-server-telemetry-dataset（服务器运行遥测故障检测数据集 · 0x07）
+README = """# server-telemetry-sim（服务器运行遥测故障检测 · 仿真数据集）
+
+> 本数据集由物理与运维规律**仿真生成**，用于算法开发与对照，不是真实采集数据。
 
 符合平台**服务器故障检测标准**（task = `server-fault`）的多变量时序数据集：8 台机房服务器（GPU 训练节点 ×3、Web 节点 ×2、数据库节点 ×2、缓存节点 ×1）的逐分钟运行遥测，每条样本为 **60 分钟 × 8 通道** 窗口，并带有**逐分钟**运行状态真值。所有符合该标准的算法都可以直接在本数据集上评测。
 
@@ -236,20 +240,20 @@ def build_dataset() -> dict:
     meta = std.write_meta(
         DATA_DIR,
         {
-            "id": "Admin/0x07-server-telemetry-dataset",
-            "name": "0x07-server-telemetry-dataset",
-            "displayName": "[0x07] 服务器运行遥测故障检测数据集",
-            "summary": "[0x07] 8 台服务器逐分钟 CPU / GPU / 内存 / 磁盘 / 网络遥测，60 分钟 × 8 通道窗口，6 类运行状态逐分钟真值与 10 分钟预警真值。",
-            "tags": ["0x07", "服务器运维", "时序预测"],
+            "id": "Admin/server-telemetry-sim",
+            "name": "server-telemetry-sim",
+            "displayName": "服务器运行遥测故障检测数据集（仿真）",
+            "summary": "【仿真】8 台服务器逐分钟 CPU / GPU / 内存 / 磁盘 / 网络遥测，60 分钟 × 8 通道窗口，6 类运行状态逐分钟真值与 10 分钟预警真值。",
+            "tags": ["仿真数据", "服务器运维", "时序预测"],
             "servers": [s["id"] for s in SERVERS],
             "createdAt": "2026-11-25T01:00:00+08:00",
-            "benchmark": {"id": "0x07-server-fault-bench", "displayName": "[0x07] 服务器运行故障检测评测基准"},
+            "benchmark": {"id": "server-fault-sim-bench", "displayName": "服务器运行故障检测评测基准（仿真数据）"},
         },
         split_records,
     )
     (DATA_DIR / "README.md").write_text(README.format(train=f"{meta['train']['files']:,}", test=f"{meta['test']['files']:,}"), encoding="utf-8")
-    print(f"[0x07] 已生成 Admin/0x07-server-telemetry-dataset：train={meta['train']['files']} 条，test={meta['test']['files']} 条")
-    print(f"[0x07] test 类别分布 {meta['test']['classCounts']}")
+    print(f"[sim] 已生成 Admin/server-telemetry-sim：train={meta['train']['files']} 条，test={meta['test']['files']} 条")
+    print(f"[sim] test 类别分布 {meta['test']['classCounts']}")
     return meta
 
 

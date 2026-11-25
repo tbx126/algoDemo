@@ -1,6 +1,6 @@
 /**
  * 服务器故障检测标准（task = 'server-fault'）的前端数据结构，与 backend/server_fault_std.py 一一对应。
- * 所有标准算法（0x07、0x6E …）的评测、推理与所有标准数据集的预览共用这些结构与组件。
+ * 所有标准算法的评测、推理与所有标准数据集的预览共用这些结构与组件。
  */
 
 export const SF_TASK = 'server-fault'

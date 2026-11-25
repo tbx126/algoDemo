@@ -78,7 +78,7 @@ from power_registry import (
     infer_power_forecast,
     load_power_state,
 )
-from server_fault_api import (  # 服务器故障检测标准（0x07 / 0x6E 等全部标准算法与数据集）
+from server_fault_api import (  # 服务器故障检测标准（全部标准算法与数据集）
     bootstrap_sf,
     ensure_matrix_evals_sf,
     find_eval_sf,

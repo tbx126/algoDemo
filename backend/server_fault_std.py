@@ -2,7 +2,7 @@
 服务器运行故障检测标准（task = "server-fault"）
 
 所有「服务器故障检测」数据集和算法都遵守同一份标准，因此任意算法都能直接在任意数据集上评测，
-不需要任何格式转换或输出映射。0x07 与 0x6E 两条线都按本标准实现。
+不需要任何格式转换或输出映射。
 
 一、数据集标准（backend/data/<dir>/）
   meta.json                         task = "server-fault"，含 id / displayName / summary / tags / benchmark

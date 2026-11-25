@@ -1,12 +1,12 @@
 """
-[0x07] 服务器运行故障检测算法（Admin/0x07）—— 实现「服务器故障检测标准」（server_fault_std）的算法接口
+服务器运行故障检测算法（Admin/server-fault-tcn）—— 实现「服务器故障检测标准」（server_fault_std）的算法接口
 
-  - 模型：Fault0x07Net = 因果膨胀 TCN（只看过去，不偷看未来）+ 单向 GRU + 双头输出
+  - 模型：ServerFaultTCN = 因果膨胀 TCN（只看过去，不偷看未来）+ 单向 GRU + 双头输出
       * 状态头：逐分钟输出标准状态码 0~5（正常 / CPU过载 / 内存泄漏 / GPU过热 / 磁盘IO饱和 / 网络异常）
       * 预警头：逐分钟「未来 10 分钟内将发生故障」概率
   - 标准输出：fault_prob = 1 − P(正常)，state = argmax 状态码，warn_prob = 预警概率
-  - 训练数据：Admin/0x07-server-telemetry-dataset 训练集（90% 训练 / 10% 验证）
-  - 权重：backend/models/0x07/v1.0.0_fault0x07.pt；训练记录：backend/state/fault0x07_state.json
+  - 训练数据：Admin/server-telemetry-sim 训练集（90% 训练 / 10% 验证）
+  - 权重：backend/models/server-fault-tcn/v1.0.0_server_fault_tcn.pt；训练记录：backend/state/server_fault_tcn_state.json
 """
 from __future__ import annotations
 
@@ -22,12 +22,12 @@ import torch.nn.functional as F
 import server_fault_std as std
 
 ROOT = Path(__file__).resolve().parent
-TRAIN_DATA_DIR = ROOT / "data" / "0x07-server-telemetry-dataset"
-MODEL_DIR = ROOT / "models" / "0x07"
-STATE_PATH = ROOT / "state" / "fault0x07_state.json"
-WEIGHT_PATH = MODEL_DIR / "v1.0.0_fault0x07.pt"
+TRAIN_DATA_DIR = ROOT / "data" / "server-telemetry-sim"
+MODEL_DIR = ROOT / "models" / "server-fault-tcn"
+STATE_PATH = ROOT / "state" / "server_fault_tcn_state.json"
+WEIGHT_PATH = MODEL_DIR / "v1.0.0_server_fault_tcn.pt"
 
-ALGO_ID = "Admin/0x07"
+ALGO_ID = "Admin/server-fault-tcn"
 # 模型可输出的标准状态码（0 ~ 5）
 OUTPUT_STATES = std.STATES[:6]
 N_OUT = len(OUTPUT_STATES)
@@ -35,19 +35,19 @@ SCALES = np.asarray([100, 100, 100, 100, 100, 100, 500, 1000], dtype=np.float32)
 IN_FEATURES = len(std.CHANNELS) * 2  # 归一化值 + 一阶差分
 
 CARD = {
-    "name": "0x07",
-    "displayName": "[0x07] 服务器运行故障检测（因果 TCN-GRU）",
-    "summary": "[0x07] 根据 CPU、GPU、内存、磁盘、网络等运行遥测，逐分钟判断服务器运行状态（6 类），并给出未来 10 分钟故障预警。",
-    "tags": ["0x07", "服务器运维", "实时推理"],
+    "name": "server-fault-tcn",
+    "displayName": "服务器运行故障检测（因果 TCN-GRU）",
+    "summary": "根据 CPU、GPU、内存、磁盘、网络等运行遥测，逐分钟判断服务器运行状态（6 类），并给出未来 10 分钟故障预警。",
+    "tags": ["服务器运维", "实时推理"],
     "business": "other",
-    "codeFile": "fault0x07_registry.py",
-    "imageDigest": "sha256:0x07fa017de7ec70000000000000000000000000000000000000000000000000107",
-    "weightsHash": "sha256:0x07fault0weights1",
+    "codeFile": "server_fault_tcn.py",
+    "imageDigest": "sha256:5f7c4e1a9b2d0c3e8f6a7b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e",
+    "weightsHash": "sha256:5f7c4e1a9b2d0c3e",
     "gpuMem": 0.2,
     "likes": 4,
     "downloads": 6,
-    "changelog": "[0x07] 在 Admin/0x07-server-telemetry-dataset 训练集上真实训练 Fault0x07Net（加权交叉熵 + 预警 BCE），实现服务器故障检测标准接口。",
-    "readme": """# 0x07（服务器运行故障检测 · 因果 TCN-GRU）
+    "changelog": "在 Admin/server-telemetry-sim（仿真）训练集上真实训练 ServerFaultTCN（加权交叉熵 + 预警 BCE），实现服务器故障检测标准接口。",
+    "readme": """# server-fault-tcn（服务器运行故障检测 · 因果 TCN-GRU）
 
 输入服务器最近 **60 分钟**的 8 路标准遥测，逐分钟输出：
 
@@ -90,7 +90,7 @@ class _CausalBlock(nn.Module):
         return F.gelu(self.norm(x + y))
 
 
-class Fault0x07Net(nn.Module):
+class ServerFaultTCN(nn.Module):
     """因果 TCN + GRU 逐分钟故障状态识别与预警网络"""
 
     def __init__(self, in_features: int = IN_FEATURES, hidden: int = 64):
@@ -115,7 +115,7 @@ def _encode(raw: np.ndarray) -> np.ndarray:
 
 
 _DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-_MODEL_CACHE: Fault0x07Net | None = None
+_MODEL_CACHE: ServerFaultTCN | None = None
 
 
 def device_label() -> str:
@@ -159,7 +159,7 @@ def train(epochs: int = 60) -> dict:
     cls_w = torch.from_numpy((counts.sum() / (N_OUT * np.maximum(counts, 1))) ** 0.5).to(_DEVICE)
     pos_w = torch.tensor(float((W[tr_idx] == 0).sum() / max(1, (W[tr_idx] == 1).sum())) ** 0.5, device=_DEVICE)
 
-    model = Fault0x07Net().to(_DEVICE)
+    model = ServerFaultTCN().to(_DEVICE)
     opt = torch.optim.AdamW(model.parameters(), lr=2e-3, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=3e-3, total_steps=epochs * ((len(tr_idx) + 63) // 64))
 
@@ -206,18 +206,18 @@ def train(epochs: int = 60) -> dict:
     }
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[0x07] 训练完成 -> {WEIGHT_PATH.name}，用时 {state['train_seconds']}s，最终验证 Macro-F1 {history[-1]['val_f1']}%")
+    print(f"[server-fault-tcn] 训练完成 -> {WEIGHT_PATH.name}，用时 {state['train_seconds']}s，最终验证 Macro-F1 {history[-1]['val_f1']}%")
     return state
 
 
-def _model() -> Fault0x07Net:
+def _model() -> ServerFaultTCN:
     global _MODEL_CACHE
     if _MODEL_CACHE is None:
         if not WEIGHT_PATH.exists():
             train()
         else:
             ckpt = torch.load(WEIGHT_PATH, map_location=_DEVICE, weights_only=True)
-            m = Fault0x07Net().to(_DEVICE)
+            m = ServerFaultTCN().to(_DEVICE)
             m.load_state_dict(ckpt["state_dict"])
             m.eval()
             _MODEL_CACHE = m

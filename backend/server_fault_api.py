@@ -23,8 +23,7 @@ import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-import fault0x07_registry
-import fault_0x6e_registry
+import server_fault_tcn
 import server_fault_std as std
 
 ROOT = Path(__file__).resolve().parent
@@ -33,7 +32,7 @@ EVALS_PATH = ROOT / "state" / "server_fault_evals.json"
 EVALUATOR_ID = "server-fault-std-evaluator"
 EVALUATOR_VERSION = "v1.0.0"
 
-ALGORITHM_MODULES: list[ModuleType] = [fault0x07_registry, fault_0x6e_registry]
+ALGORITHM_MODULES: list[ModuleType] = [server_fault_tcn]
 ALGOS: dict[str, ModuleType] = {m.ALGO_ID: m for m in ALGORITHM_MODULES}
 
 router_sf = APIRouter()
