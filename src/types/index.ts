@@ -363,6 +363,7 @@ export interface EvalRun {
   perClassLabel?: string
   /** 服务器故障检测标准：统一评测器输出的折线图数据 */
   vizServerFault?: import('@/components/serverfault/types').ServerFaultViz
+  vizPowerForecast?: import('@/components/powerforecast/types').PfEvalVizData
   errorSamples?: { fileName: string; url: string; groundTruth: string; predicted: string; confidence: number }[]
   logs: string[]
   error?: string

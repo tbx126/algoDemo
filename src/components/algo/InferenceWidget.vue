@@ -8,6 +8,7 @@ import { TASKS } from '@/utils/meta'
 import { CLASS_COLORS, sampleImageDataUrl } from '@/utils/synth'
 import { hashStr } from '@/utils/format'
 import SfInferPanel from '@/components/serverfault/SfInferPanel.vue'
+import PfInferPanel from '@/components/powerforecast/PfInferPanel.vue'
 
 const props = defineProps<{ algo: Algorithm; lockedReason?: string; pendingTrial?: boolean }>()
 const emit = defineEmits<{ applyTrial: [] }>()
@@ -220,6 +221,7 @@ const accept = computed(() => (isImageTask.value ? 'image/*' : props.algo.task =
 
     <!-- 服务器故障检测标准：所有标准算法共用的推理与折线图面板 -->
     <SfInferPanel v-else-if="algo.task === 'server-fault'" :algo="algo" :version="version" />
+    <PfInferPanel v-else-if="algo.id === 'Admin/power-dlinear'" :algo="algo" :version="version" />
 
     <div v-else class="space-y-3 p-4">
       <div v-if="isRandomAlgo" class="flex items-center gap-2 text-xs">

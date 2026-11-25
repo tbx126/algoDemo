@@ -3,9 +3,9 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { TocItem } from '@/utils/markdown'
 
 /**
- * 迷你文档大纲：正文左侧留白处的一列短横线刻度。
- * - 绝对定位在父容器（需 relative，并在左侧留出约 2.5rem 留白）的左边缘，不占据正文宽度
- * - 与正文顶部对齐，滚动时吸顶；不显示标题名称，悬停时以浮层提示
+ * 迷你文档大纲：正文外侧左留白处的一列短横线刻度。
+ * - 绝对定位在父容器（需 relative）左边缘外侧，不占据正文宽度、正文与页头左对齐
+ * - 随视口垂直居中吸顶；不显示标题名称，悬停时以浮层提示
  * - 滚动高亮当前章节，点击平滑跳转
  */
 const props = defineProps<{ items: TocItem[] }>()
@@ -61,9 +61,9 @@ function go(id: string) {
 </script>
 
 <template>
-  <div v-if="items.length" class="pointer-events-none absolute inset-y-0 left-0 hidden w-6 lg:block">
-    <nav aria-label="文档大纲" class="pointer-events-auto sticky top-24">
-      <ul class="no-scrollbar flex max-h-[calc(100vh-8rem)] flex-col items-start overflow-y-auto">
+  <div v-if="items.length" class="pointer-events-none absolute inset-y-0 -left-7 hidden w-6 lg:block 2xl:-left-10">
+    <nav aria-label="文档大纲" class="pointer-events-auto sticky top-1/2 -translate-y-1/2">
+      <ul class="no-scrollbar flex max-h-[calc(100vh-12rem)] flex-col items-start overflow-y-auto">
         <li v-for="it in items" :key="it.id" class="relative">
           <a
             :href="`#${it.id}`"

@@ -20,6 +20,7 @@ import SynthImage from '@/components/ui/SynthImage.vue'
 import Modal from '@/components/ui/Modal.vue'
 import EditDatasetModal from '@/components/admin/EditDatasetModal.vue'
 import SfSeriesPreview from '@/components/serverfault/SfSeriesPreview.vue'
+import PfSeriesPreview from '@/components/powerforecast/PfSeriesPreview.vue'
 import { SF_TASK } from '@/components/serverfault/types'
 
 const route = useRoute()
@@ -157,7 +158,7 @@ function download(p: SplitName) {
       <div class="container-page pt-6">
         <!-- ========== 卡片 ========== -->
         <div v-if="tab === 'card'" class="flex flex-col gap-8 lg:flex-row">
-          <div class="relative min-w-0 flex-1" :class="{ 'lg:pl-10': toc.length }">
+          <div class="relative min-w-0 flex-1">
             <DocOutline :items="toc" />
             <div class="mb-6 overflow-hidden rounded-xl border border-gray-100 dark:border-gray-800">
               <div class="flex items-center justify-between border-b border-gray-100 px-3 py-2 text-sm dark:border-gray-800">
@@ -167,6 +168,10 @@ function download(p: SplitName) {
               <!-- 服务器故障检测标准数据集：折线图预览 -->
               <div v-if="ds.task === SF_TASK" class="p-3">
                 <SfSeriesPreview :dataset-id="ds.id" part="train" :rows="ds.realPreview?.train ?? []" :max="12" />
+              </div>
+              <!-- 新能源功率预测标准数据集：48h 功率与 NWP 气象折线图预览 -->
+              <div v-else-if="ds.task === 'power-forecast' && isRealDataset" class="p-3">
+                <PfSeriesPreview :dataset-id="ds.id" part="train" :rows="ds.realPreview?.train ?? []" :max="12" />
               </div>
               <div v-else-if="ds.realPreview?.train?.length" class="grid gap-1.5 p-1.5" :class="ds.task === 'ocr' ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-3 sm:grid-cols-6'">
                 <div v-for="item in ds.realPreview.train" :key="item.file_name" class="relative overflow-hidden rounded-md border border-gray-100 bg-gray-100 dark:border-gray-800 dark:bg-gray-900">
@@ -290,6 +295,11 @@ function download(p: SplitName) {
             <template v-if="ds.task === SF_TASK">
               <h2 class="mt-8 mb-3 text-sm font-semibold">series/ 折线图预览 <span class="font-normal text-gray-500">· 浅红色背景为 Ground Truth 故障段，浅黄色为故障前 10 分钟预警段</span></h2>
               <SfSeriesPreview :dataset-id="ds.id" :part="partName" :rows="realRows" :max="36" />
+            </template>
+            <!-- 新能源功率预测标准数据集：series/ 48h 功率与气象折线图预览 -->
+            <template v-else-if="ds.task === 'power-forecast' && isRealDataset">
+              <h2 class="mt-8 mb-3 text-sm font-semibold">series/ 功率时序折线图预览 <span class="font-normal text-gray-500">· 虚线为过去 24h 历史实测，实线为未来 24h 真实功率（GT）</span></h2>
+              <PfSeriesPreview :dataset-id="ds.id" :part="partName" :rows="realRows" :max="24" />
             </template>
             <template v-else>
             <div class="mt-8 mb-3 flex items-center gap-3">

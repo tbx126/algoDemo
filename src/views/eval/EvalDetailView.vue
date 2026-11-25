@@ -15,6 +15,7 @@ import HashText from '@/components/ui/HashText.vue'
 import OrgAvatar from '@/components/ui/OrgAvatar.vue'
 import SynthImage from '@/components/ui/SynthImage.vue'
 import SfEvalViz from '@/components/serverfault/SfEvalViz.vue'
+import PfEvalViz from '@/components/powerforecast/PfEvalViz.vue'
 import { useRouter } from 'vue-router'
 
 const route = useRoute()
@@ -52,6 +53,19 @@ const benchId = computed(() => run.value?.benchmarkId ?? '')
 const { data: bench } = useAsync(async () => (benchId.value ? getBenchmark(benchId.value) : undefined), [benchId])
 const ds = computed(() => datasets.find((d) => d.id === bench.value?.datasetId))
 const primary = computed(() => bench.value?.metrics.find((m) => m.primary))
+
+// 指标卡片自适应列数：1~7 个指标在桌面端单行铺满，8 个指标 4×2 对称排布，避免第二行落单
+const metricsGridClass = computed(() => {
+  const n = bench.value?.metrics.length ?? 0
+  if (n <= 2) return 'grid-cols-2'
+  if (n === 3) return 'grid-cols-2 sm:grid-cols-3'
+  if (n === 4) return 'grid-cols-2 lg:grid-cols-4'
+  if (n === 5) return 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5'
+  if (n === 6) return 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-6'
+  if (n === 7) return 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-7'
+  if (n === 8) return 'grid-cols-2 sm:grid-cols-4'
+  return 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5'
+})
 
 const canCancel = computed(() => run.value && (run.value.status === 'queued' || run.value.status === 'running') && (can.value.admin || run.value.submittedBy === user.value.username))
 
@@ -137,10 +151,23 @@ async function rerun() {
       </div>
 
       <!-- 指标 -->
-      <div v-if="bench && run.status === 'succeeded'" class="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <div v-for="m in bench.metrics" :key="m.key" class="card p-4" :class="m.primary ? 'border-amber-300 dark:border-amber-800' : ''">
-          <p class="text-xs text-gray-500">{{ m.label }}<span v-if="m.primary" class="ml-1 text-amber-600">· 主指标</span></p>
-          <p class="mt-1 text-2xl font-semibold text-gray-900 dark:text-white">
+      <div v-if="bench && run.status === 'succeeded'" class="mt-6 grid gap-3" :class="metricsGridClass">
+        <div
+          v-for="m in bench.metrics"
+          :key="m.key"
+          class="card flex flex-col justify-between p-3.5 sm:p-4"
+          :class="m.primary ? 'border-amber-300 bg-amber-50/30 dark:border-amber-800 dark:bg-amber-950/15' : ''"
+        >
+          <div class="flex items-start justify-between gap-1.5">
+            <p class="text-xs leading-snug text-gray-500">{{ m.label }}</p>
+            <span
+              v-if="m.primary"
+              class="shrink-0 rounded bg-amber-100/80 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/50 dark:text-amber-300"
+            >
+              主指标
+            </span>
+          </div>
+          <p class="mt-2 text-2xl font-semibold tracking-tight tabular-nums text-gray-900 dark:text-white">
             {{ fmtMetric(run.metrics[m.key], m.unit) }}<span class="ml-0.5 text-sm font-normal text-gray-400">{{ m.unit }}</span>
           </p>
         </div>
@@ -148,6 +175,8 @@ async function rerun() {
 
       <!-- 服务器故障检测标准：统一评测器折线图（测试集样本曲线仅管理员可见） -->
       <SfEvalViz v-if="run.status === 'succeeded' && run.vizServerFault" class="mt-6" :viz="run.vizServerFault" :show-cases="can.testAccess" />
+      <!-- 新能源功率预测标准：5 维折线图可视化（测试集单样本曲线仅管理员可见） -->
+      <PfEvalViz v-if="run.status === 'succeeded' && run.vizPowerForecast" class="mt-6" :viz="run.vizPowerForecast" :show-cases="can.testAccess" />
 
       <div class="mt-6 grid gap-6 lg:grid-cols-[1fr_380px]">
         <div class="min-w-0 space-y-6">

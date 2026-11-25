@@ -68,15 +68,12 @@ from studio_engine import (
     run_studio_batch_eval,
     run_studio_sample,
 )
-from power_registry import (
-    POWER_ALGO_ID,
-    POWER_BENCH_ID,
-    POWER_DATA_DIR,
-    POWER_DATASET_ID,
-    POWER_STATE_PATH,
-    evaluate_power_on_test,
-    infer_power_forecast,
-    load_power_state,
+from power_forecast_api import (  # 新能源短期功率预测标准
+    bootstrap_pf,
+    find_eval_pf,
+    list_evals_pf,
+    router_pf,
+    trigger_eval_pf,
 )
 from server_fault_api import (  # 服务器故障检测标准（全部标准算法与数据集）
     bootstrap_sf,
@@ -92,7 +89,6 @@ META_FILE = DATA_DIR / "meta.json"
 DEHAZE_META_FILE = DEHAZE_DATA_DIR / "meta.json"
 OCR_DATA_DIR = ROOT / "data" / "sroie-ocr-dataset"
 OCR_META_FILE = OCR_DATA_DIR / "meta.json"
-POWER_META_FILE = POWER_DATA_DIR / "meta.json"
 TZ_CN = timezone(timedelta(hours=8))
 
 app = FastAPI(title="AlgoHub Real Backend", version="0.1.0")
@@ -102,8 +98,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# 服务器故障检测标准路由：必须先于通用 /real-api/algorithms/Admin/{algo_name}/infer 注册
+# 服务器故障检测标准 & 功率预测标准路由：必须先于通用 /real-api/algorithms/Admin/{algo_name}/infer 注册
 app.include_router(router_sf)
+app.include_router(router_pf)
 ensure_matrix_evals_sf()
 
 _STATE_LOCK = threading.Lock()
@@ -1070,8 +1067,6 @@ def bootstrap():
     meta = load_dataset_meta()
     dmeta = load_dehaze_meta()
     ometa = load_ocr_meta()
-    pmeta = load_power_meta()
-    pstate = load_power_state()
     cat_dog = build_real_algorithm(state)
     rand_algo = build_random_algorithm(state)
     cat_dog_ds = build_real_dataset(meta)
@@ -1091,15 +1086,11 @@ def bootstrap():
     if ometa:
         datasets.append(build_ocr_dataset(ometa))
 
-    if pmeta and pstate:
-        algorithms.append(build_power_algorithm(pstate))
-        datasets.append(build_power_dataset(pmeta))
-        benchmarks.append(build_power_benchmark(pmeta))
-        pevals = pstate.get("evals")
-        if isinstance(pevals, list) and pevals:
-            evals.extend(pevals)
-        else:
-            evals.append(build_power_initial_eval(pstate))
+    pf_algos, pf_dss, pf_benches, pf_evals = bootstrap_pf()  # 功率预测标准
+    algorithms.extend(pf_algos)
+    datasets.extend(pf_dss)
+    benchmarks.extend(pf_benches)
+    evals.extend(pf_evals)
 
     sf = bootstrap_sf()  # 服务器故障检测标准
     algorithms.extend(sf["algorithms"])
@@ -1276,61 +1267,6 @@ def download_ocr_dataset_part(part: Literal["train", "test"]):
         media_type="application/zip",
         filename=f"sroie-ocr-dataset-{part}-v1.0.zip",
     )
-
-
-@app.get("/real-api/datasets/Admin/wind-solar-power-dataset/part/{part}")
-def get_power_dataset_part(part: Literal["train", "test"], limit: int = 200):
-    pmeta = load_power_meta()
-    if not pmeta:
-        raise HTTPException(status_code=404, detail="功率预测数据集尚未生成")
-    rows = read_power_part_rows(part, limit=max(1, min(limit, 500)))
-    return {
-        "part": part,
-        "columns": ["file_name", "value", "station", "weather"],
-        "total": pmeta[part]["files"],
-        "rows": rows,
-    }
-
-
-@app.get("/real-api/datasets/Admin/wind-solar-power-dataset/files/{part}/{filename}")
-def get_power_dataset_file(part: Literal["train", "test"], filename: str):
-    if "/" in filename or "\\" in filename or ".." in filename:
-        raise HTTPException(status_code=400, detail="非法文件名")
-    path = POWER_DATA_DIR / part / "series" / filename
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="时序文件不存在")
-    return FileResponse(path, media_type="text/csv")
-
-
-@app.get("/real-api/datasets/Admin/wind-solar-power-dataset/download/{part}")
-def download_power_dataset_part(part: Literal["train", "test"]):
-    zip_path = POWER_DATA_DIR / f"wind-solar-power-dataset-{part}-v1.0.zip"
-    if not zip_path.exists():
-        raise HTTPException(status_code=404, detail="数据集压缩包不存在")
-    return FileResponse(
-        zip_path,
-        media_type="application/zip",
-        filename=zip_path.name,
-    )
-
-
-@app.post("/real-api/algorithms/Admin/power-dlinear/infer")
-async def infer_power_endpoint(
-    version: str = Form("v1.0.0"),
-    file: UploadFile | None = File(None),
-    sample_path: str | None = Form(None),
-):
-    raw: bytes | None = None
-    fname = "station_huazhong_24h.csv"
-    if file is not None:
-        raw = await file.read()
-        fname = file.filename or fname
-    elif sample_path:
-        fname = Path(sample_path).name
-    try:
-        return infer_power_forecast(raw, filename=fname)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"时序预测推理失败：{exc}")
 
 
 @app.post("/real-api/algorithms/Admin/random/infer")
@@ -1549,47 +1485,9 @@ def trigger_real_eval(req: EvalRequest):
     run_sf = trigger_eval_sf(req.algorithmId, req.algoVersion, req.benchmarkId, req.submittedBy)  # 服务器故障检测标准
     if run_sf is not None:
         return run_sf
-    if req.algorithmId == POWER_ALGO_ID and req.benchmarkId == POWER_BENCH_ID:
-        res = evaluate_power_on_test()
-        now = iso_now()
-        run = {
-            "id": f"ev-power-{int(datetime.now(TZ_CN).timestamp())}",
-            "algorithmId": req.algorithmId,
-            "algoVersion": req.algoVersion,
-            "benchmarkId": req.benchmarkId,
-            "status": "succeeded",
-            "progress": 100,
-            "submittedBy": req.submittedBy,
-            "submittedAt": now,
-            "startedAt": now,
-            "finishedAt": now,
-            "metrics": res["metrics"],
-            "imageDigest": "sha256:powerdlinear0100000000000000000000000000000000000000000000000100",
-            "weightsHash": "sha256:powerdlinearw100",
-            "evaluatorVersion": "v0.5.0",
-            "hardware": res["device"],
-            "datasetHash": "sha256:powerdatasetv10",
-            "durationSec": res["durationSec"],
-            "peakGpuMemGB": 0.1,
-            "latencyMs": 1.2,
-            "isLatestValid": True,
-            "perClass": res["perClass"],
-            "logs": [
-                f"[runner] 加载 {POWER_ALGO_ID}@{req.algoVersion} ({res['device']})",
-                f"[runner] 挂载 {POWER_DATASET_ID}@v1.0/test（共 {res['samples']} 条 24h→24h 时序窗口）",
-                f"[done] 真实评测完成：预测准确率={res['metrics']['accuracy_rate']}%，RMSE={res['metrics']['rmse']}%，MAE={res['metrics']['mae']}%",
-            ],
-        }
-        with _STATE_LOCK:
-            pst = load_power_state() or {}
-            pevals = list(pst.get("evals") or [build_power_initial_eval(pst)])
-            for other in pevals:
-                if other.get("algorithmId") == req.algorithmId and other.get("algoVersion") == req.algoVersion and other.get("benchmarkId") == req.benchmarkId:
-                    other["isLatestValid"] = False
-            pevals.insert(0, run)
-            pst["evals"] = pevals
-            POWER_STATE_PATH.write_text(json.dumps(pst, ensure_ascii=False, indent=2), encoding="utf-8")
-        return run
+    run_pf = trigger_eval_pf(req.algorithmId, req.algoVersion, req.benchmarkId, req.submittedBy)  # 功率预测标准
+    if run_pf is not None:
+        return run_pf
     if req.algorithmId in DEHAZE_ALGOS and req.benchmarkId == "dehaze-bench":
         with _STATE_LOCK:
             dst = load_dehaze_state()
@@ -1820,10 +1718,7 @@ def list_real_evals():
         dst = load_dehaze_state()
         if dst:
             evals.extend(dst["evals"])
-        pst = load_power_state()
-        if pst:
-            pevals = pst.get("evals")
-            evals.extend(pevals if isinstance(pevals, list) and pevals else [build_power_initial_eval(pst)])
+    evals.extend(list_evals_pf())  # 功率预测标准
     evals.extend(list_evals_sf())  # 服务器故障检测标准
     with _CUSTOM_LOCK:
         evals = list(load_custom_state()["evals"]) + evals
@@ -1835,6 +1730,9 @@ def get_real_eval(eval_id: str):
     run_sf = find_eval_sf(eval_id)  # 服务器故障检测标准
     if run_sf is not None:
         return run_sf
+    run_pf = find_eval_pf(eval_id)  # 功率预测标准
+    if run_pf is not None:
+        return run_pf
     with _CUSTOM_LOCK:
         cst = load_custom_state()
     run = next((r for r in cst["evals"] if r["id"] == eval_id), None)
@@ -1843,13 +1741,9 @@ def get_real_eval(eval_id: str):
     with _STATE_LOCK:
         st = load_state()
         dst = load_dehaze_state()
-        pst = load_power_state()
     run = next((r for r in st["evals"] if r["id"] == eval_id), None)
     if not run and dst:
         run = next((r for r in dst["evals"] if r["id"] == eval_id), None)
-    if not run and pst:
-        pevals = pst.get("evals") or [build_power_initial_eval(pst)]
-        run = next((r for r in pevals if r["id"] == eval_id), None)
     if not run:
         raise HTTPException(status_code=404, detail="评测记录不存在")
     return run
