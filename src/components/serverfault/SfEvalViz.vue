@@ -13,7 +13,9 @@ const lossSeries = computed<SfSeries[]>(() => [
   { key: 'va', name: '验证损失', values: props.viz.history.map((h) => h.val_loss), color: 'var(--v7-s2)' },
 ])
 const f1Series = computed<SfSeries[]>(() => [{ key: 'f1', name: '验证集 F1', values: props.viz.history.map((h) => h.val_f1), color: 'var(--v7-s1)', area: true }])
-const bestEpoch = computed(() => props.viz.history.reduce((b, h) => (h.val_loss < b.val_loss ? h : b), props.viz.history[0]))
+const lowestLoss = computed(() => props.viz.history.reduce((b, h) => (h.val_loss < b.val_loss ? h : b), props.viz.history[0]))
+const savedEpoch = computed(() => props.viz.bestEpoch ?? null)
+const epochMarkers = computed(() => (savedEpoch.value ? [{ x: savedEpoch.value, label: '保存的权重' }] : []))
 
 const ths = computed(() => props.viz.thresholdCurve.map((t) => t.threshold))
 const thSeries = computed<SfSeries[]>(() => [
@@ -87,10 +89,10 @@ const caseTitle = (c: ServerFaultViz['cases'][number]) => (c.label === '正常' 
 
       <section v-if="viz.history.length" class="card p-5">
         <h3 class="mb-1 text-sm font-semibold">训练曲线</h3>
-        <p class="mb-3 text-xs text-gray-500">来自该算法在自己训练数据集上的训练记录（与本评测基准无关）：训练集 90% 训练、10% 验证，验证损失最低在第 {{ bestEpoch?.epoch }} 轮，共 {{ viz.history.length }} 轮。</p>
-        <SfLineChart :x="epochs" :series="lossSeries" :y-min="0" :y-format="(v) => v.toFixed(2)" :tip-format="(v) => v.toFixed(4)" :x-format="(v) => `第 ${Math.round(v)} 轮`" :height="150" />
+        <p class="mb-3 text-xs text-gray-500">来自该算法在自己训练数据集上的训练记录（与本评测基准无关）：训练集 90% 训练、10% 验证，共 {{ viz.history.length }} 轮；验证损失最低在第 {{ lowestLoss?.epoch }} 轮<template v-if="savedEpoch">，实际保存的是验证集 F1 最高的第 {{ savedEpoch }} 轮</template>。</p>
+        <SfLineChart :x="epochs" :series="lossSeries" :markers="epochMarkers" :y-min="0" :y-format="(v) => v.toFixed(2)" :tip-format="(v) => v.toFixed(4)" :x-format="(v) => `第 ${Math.round(v)} 轮`" :height="150" />
         <div class="mt-3">
-          <SfLineChart :x="epochs" :series="f1Series" :y-min="0" :y-max="100" :y-format="pct" :tip-format="(v) => `${v.toFixed(2)}%`" :x-format="(v) => `第 ${Math.round(v)} 轮`" x-label="训练轮次（epoch）" :height="150" />
+          <SfLineChart :x="epochs" :series="f1Series" :markers="epochMarkers" :y-min="0" :y-max="100" :y-format="pct" :tip-format="(v) => `${v.toFixed(2)}%`" :x-format="(v) => `第 ${Math.round(v)} 轮`" x-label="训练轮次（epoch）" :height="150" />
           <p class="mt-1 text-[11px] text-gray-500">验证集 F1（%）</p>
         </div>
       </section>

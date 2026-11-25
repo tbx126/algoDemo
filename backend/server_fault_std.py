@@ -5,7 +5,8 @@
 不需要任何格式转换或输出映射。
 
 一、数据集标准（backend/data/<dir>/）
-  meta.json                         task = "server-fault"，含 id / displayName / summary / tags / benchmark
+  meta.json                         task = "server-fault"，含 id / displayName / summary / tags / benchmark，
+                                    以及 machines：{server: 机器规格}，每台机器至少含 MACHINE_SPEC_REQUIRED 中的容量字段
   README.md                         数据集卡片
   {train,test}/series/*.csv         每个文件 60 行，表头固定为 SERIES_COLUMNS（原始物理单位）
   {train,test}/labels.csv           表头固定为 LABEL_COLUMNS
@@ -15,13 +16,14 @@
 
 二、算法标准（backend/<module>.py）
   ALGO_ID: str
-  predict_batch(raw: np.ndarray[N, 60, 8]) -> dict
-      raw 为 CHANNELS 顺序、原始物理单位的遥测；归一化由算法自己完成
+  predict_batch(raw: np.ndarray[N, 60, 8], specs: list[dict]) -> dict
+      raw 为 CHANNELS 顺序、原始物理单位的遥测；specs 为每个窗口所在机器的规格（见 MACHINE_SPEC_REQUIRED），
+      算法可用 to_relative(raw, specs) 按容量换算成相对值（不同硬件可比），归一化方式由算法自己决定
       必须返回 "fault_prob": [N, 60]，逐分钟故障概率（0~1）
       可选返回 "state":      [N, 60]，逐分钟状态码（取值见 STATES）
       可选返回 "warn_prob":  [N, 60]，逐分钟「未来 10 分钟内发生故障」概率
   load_state() -> dict | None       训练记录，history = [{epoch, train_loss, val_loss, val_f1}]
-  algorithm_card(state, own_metrics) -> dict   平台算法卡片
+  CARD: dict                        平台算法卡片信息
   可选 diagnose(raw_window[60, 8], pred: dict) -> str   推理时的文字诊断
 
 三、评测标准：evaluate() 对所有算法 × 所有数据集使用同一套指标与可视化数据。
@@ -47,6 +49,11 @@ CHANNELS = ["cpu_pct", "cpu_temp_c", "mem_pct", "gpu_pct", "gpu_temp_c", "gpu_me
 CHANNEL_UNITS = {"cpu_pct": "%", "cpu_temp_c": "℃", "mem_pct": "%", "gpu_pct": "%", "gpu_temp_c": "℃", "gpu_mem_pct": "%", "disk_io_mbps": "MB/s", "net_mbps": "Mbps"}
 SERIES_COLUMNS = ["minute", *CHANNELS]
 LABEL_COLUMNS = ["file_name", "label", "server", "role", "onset_min", "state_seq", "warn_seq"]
+
+# 机器规格：磁盘与网络吞吐是绝对值，必须结合容量才能判断「是否打满」；百分比与温度通道本身已可跨硬件比较
+MACHINE_SPEC_REQUIRED = ["disk_max_mbps", "net_max_mbps"]
+MACHINE_SPEC_OPTIONAL = ["cpu_cores", "mem_gb", "gpu"]
+DEFAULT_SPEC = {"disk_max_mbps": 500.0, "net_max_mbps": 1000.0}  # 未提供规格时（如上传 CSV 未填写）使用的参考容量
 
 # 统一状态码表：任何数据集 / 算法都只能使用这些编码（新增状态只能追加，不能改已有编码）
 STATES = ["正常", "CPU过载", "内存泄漏", "GPU过热", "磁盘IO饱和", "网络异常", "显存泄漏", "内存IO雪崩", "其他异常"]
@@ -119,7 +126,13 @@ def pack_zip(data_dir: Path, split: str) -> tuple[int, str]:
 
 
 def write_meta(data_dir: Path, info: dict, split_records: dict[str, list[dict]]) -> dict:
-    """info 需含 id / displayName / summary / tags / benchmark{id, displayName}；统计字段由本函数计算"""
+    """info 需含 id / displayName / summary / tags / benchmark{id, displayName} / machines{server: spec}；统计字段由本函数计算"""
+    machines = info.get("machines") or {}
+    for split, recs in split_records.items():
+        for r in recs:
+            spec = machines.get(r["server"])
+            if not spec or any(k not in spec for k in MACHINE_SPEC_REQUIRED):
+                raise ValueError(f"meta.machines 缺少机器 {r['server']} 的规格（需要 {MACHINE_SPEC_REQUIRED}）")
     meta = {**info, "task": TASK, "window_minutes": WINDOW, "warn_horizon_minutes": WARN_HORIZON, "channels": CHANNELS, "states": STATES}
     for split, recs in split_records.items():
         size, sha = pack_zip(data_dir, split)
@@ -180,10 +193,33 @@ def load_split(data_dir: Path, split: str) -> tuple[np.ndarray, np.ndarray, np.n
     return np.stack(raws), np.asarray(ys, dtype=np.int64), np.asarray(ws, dtype=np.float32), metas
 
 
+def load_specs(data_dir: Path, metas: list[dict]) -> list[dict]:
+    """每个窗口所在机器的规格（来自 meta.json 的 machines）"""
+    machines = (read_meta(data_dir) or {}).get("machines", {})
+    return [machines.get(m["server"], DEFAULT_SPEC) for m in metas]
+
+
+def to_relative(raw: np.ndarray, specs: list[dict]) -> np.ndarray:
+    """[N, 60, 8] 原始遥测 -> 按容量换算的相对值（约 0~1）：百分比 /100、温度 /100、磁盘 / 磁盘上限、网络 / 网络上限"""
+    raw = np.asarray(raw, dtype=np.float32)
+    if len(specs) != len(raw):
+        raise ValueError("specs 数量必须与窗口数一致")
+    scale = np.ones((len(raw), 1, len(CHANNELS)), dtype=np.float32) * 100.0
+    for i, sp in enumerate(specs):
+        scale[i, 0, CHANNELS.index("disk_io_mbps")] = float(sp.get("disk_max_mbps") or DEFAULT_SPEC["disk_max_mbps"])
+        scale[i, 0, CHANNELS.index("net_mbps")] = float(sp.get("net_max_mbps") or DEFAULT_SPEC["net_max_mbps"])
+    return np.clip(raw / scale, 0.0, 1.5).astype(np.float32)
+
+
 def validate_dataset(data_dir: Path) -> None:
     meta = read_meta(data_dir)
     if not meta:
         raise ValueError(f"{data_dir.name}: meta.json 缺失或 task 不是 {TASK}")
+    for server, spec in (meta.get("machines") or {}).items():
+        if any(k not in spec for k in MACHINE_SPEC_REQUIRED):
+            raise ValueError(f"{data_dir.name}: 机器 {server} 的规格缺少 {MACHINE_SPEC_REQUIRED}")
+    if not meta.get("machines"):
+        raise ValueError(f"{data_dir.name}: meta.json 缺少 machines 机器规格")
     for split in ("train", "test"):
         with (data_dir / split / "labels.csv").open("r", encoding="utf-8") as f:
             header = next(csv.reader(f))
@@ -241,7 +277,7 @@ METRICS = [
 
 
 def evaluate(
-    predict_batch: Callable[[np.ndarray], dict],
+    predict_batch: Callable[[np.ndarray, list[dict]], dict],
     data_dir: Path,
     history: list[dict] | None = None,
     say: Callable[[int, str], None] | None = None,
@@ -250,10 +286,11 @@ def evaluate(
     say = say or (lambda p, m: None)
     t0 = time.perf_counter()
     RAW, Y, WG, metas = load_split(data_dir, "test")
+    specs = load_specs(data_dir, metas)
     say(30, f"[runner] 挂载 {data_dir.name}@v1.0/test：{len(metas)} 个 60 分钟 × 8 通道窗口（标准 {TASK}），共 {Y.size:,} 个逐分钟真值")
 
     t_inf = time.perf_counter()
-    out = predict_batch(RAW)
+    out = predict_batch(RAW, specs)
     infer_ms = (time.perf_counter() - t_inf) * 1000
     P = np.asarray(out["fault_prob"], dtype=np.float64)
     S = np.asarray(out["state"], dtype=np.int64) if out.get("state") is not None else None
@@ -345,6 +382,7 @@ def evaluate(
             "file": Path(metas[i]["file_name"]).name,
             "server": metas[i]["server"],
             "role": metas[i]["role"],
+            "spec": specs[i],
             "label": metas[i]["label"],
             "predLabel": STATES[run_label(S[i] if S is not None else None, P[i])],
             "onset": onset,

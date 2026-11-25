@@ -31,8 +31,14 @@ ALGO_ID = "Admin/server-fault-tcn"
 # 模型可输出的标准状态码（0 ~ 5）
 OUTPUT_STATES = std.STATES[:6]
 N_OUT = len(OUTPUT_STATES)
-SCALES = np.asarray([100, 100, 100, 100, 100, 100, 500, 1000], dtype=np.float32)  # 与 std.CHANNELS 顺序一致
-IN_FEATURES = len(std.CHANNELS) * 2  # 归一化值 + 一阶差分
+# 输入特征（每路通道 3 个，共 24 维）：
+#   1. 按机器容量换算的相对值 std.to_relative（磁盘 / 网络除以该机器上限，不同硬件可比）
+#   2. 一阶差分（变化速度）
+#   3. 偏离自身近期均值的程度（因果滑动均值，只用过去数据），学的是「和这台机器平时比」而不是绝对水平
+IN_FEATURES = len(std.CHANNELS) * 3
+BASELINE_SPAN = 15  # 近期均值的窗口长度（分钟）
+SATURATION_FROM = 0.6  # 磁盘 / 网络利用率超过该比例才开始计入「接近上限程度」
+_THROUGHPUT = [std.CHANNELS.index("disk_io_mbps"), std.CHANNELS.index("net_mbps")]
 
 CARD = {
     "name": "server-fault-tcn",
@@ -67,7 +73,8 @@ minute,cpu_pct,cpu_temp_c,mem_pct,gpu_pct,gpu_temp_c,gpu_mem_pct,disk_io_mbps,ne
 
 ## 模型结构
 
-- **输入编码**：8 路遥测按量程归一化，并拼接一阶差分，共 16 维
+- **输入编码**：8 路遥测先按机器容量换算成相对值（磁盘、网络除以该机器上限），再拼接一阶差分与「偏离自身近期 15 分钟均值」两组特征，共 24 维，使模型学的是相对变化而不是某种硬件上的绝对读数
+- **模型选择**：训练时保存验证集 Macro-F1 最高的一轮（相同时取验证损失更低的），而不是最后一轮
 - **因果膨胀 TCN**：4 个残差块，膨胀系数 1 / 2 / 4 / 8，只看当前及过去的数据，可以直接用于在线监控
 - **单向 GRU**：汇总长程上下文
 - **双输出头**：6 类状态 softmax 与预警 sigmoid
@@ -107,11 +114,24 @@ class ServerFaultTCN(nn.Module):
         return self.state_head(h), self.warn_head(h).squeeze(-1)
 
 
-def _encode(raw: np.ndarray) -> np.ndarray:
-    """[N, 60, 8] 原始标准遥测 -> [N, 60, 16]"""
-    norm = raw / SCALES
-    diff = np.diff(norm, axis=1, prepend=norm[:, :1])
-    return np.concatenate([norm, diff * 4.0], axis=2).astype(np.float32)
+def _encode(raw: np.ndarray, specs: list[dict]) -> np.ndarray:
+    """[N, 60, 8] 原始标准遥测 + 机器规格 -> [N, 60, 24]"""
+    rel = std.to_relative(raw, specs)
+    diff = np.diff(rel, axis=1, prepend=rel[:, :1])
+    csum = np.cumsum(rel, axis=1)
+    lagged = np.concatenate([np.zeros_like(csum[:, :1]), csum[:, :-BASELINE_SPAN]], axis=1) if rel.shape[1] > BASELINE_SPAN else np.zeros_like(csum[:, :1])
+    n = np.minimum(np.arange(1, rel.shape[1] + 1), BASELINE_SPAN).reshape(1, -1, 1).astype(np.float32)
+    head = csum[:, :BASELINE_SPAN]
+    tail = csum[:, BASELINE_SPAN:] - lagged[:, 1 : rel.shape[1] - BASELINE_SPAN + 1] if rel.shape[1] > BASELINE_SPAN else csum[:, :0]
+    run_mean = np.concatenate([head, tail], axis=1) / n
+    level = rel.copy()
+    dev = (rel - run_mean) * 2.0
+    # 磁盘 / 网络吞吐：不同机器的正常利用率水平差别很大（高配机器带宽大、利用率自然低），
+    # 不直接使用水平值，改用「接近上限程度」（判断打满）与「相对自身近期均值的对数比」（判断骤降 / 暴涨），与平时水平高低无关
+    for c in _THROUGHPUT:
+        level[..., c] = np.clip((rel[..., c] - SATURATION_FROM) / (1.0 - SATURATION_FROM), 0.0, 1.5)
+        dev[..., c] = np.clip(np.log((rel[..., c] + 0.01) / (run_mean[..., c] + 0.01)), -3.0, 3.0) / 3.0
+    return np.concatenate([level, diff * 4.0, dev], axis=2).astype(np.float32)
 
 
 _DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -147,8 +167,8 @@ def train(epochs: int = 60) -> dict:
     torch.manual_seed(7)
     np.random.seed(7)
 
-    RAW, Y, W, _ = std.load_split(TRAIN_DATA_DIR, "train")
-    X = _encode(RAW)
+    RAW, Y, W, metas = std.load_split(TRAIN_DATA_DIR, "train")
+    X = _encode(RAW, std.load_specs(TRAIN_DATA_DIR, metas))
     idx = np.random.permutation(len(X))
     n_val = len(X) // 10
     val_idx, tr_idx = idx[:n_val], idx[n_val:]
@@ -169,6 +189,7 @@ def train(epochs: int = 60) -> dict:
         return ce + 0.5 * F.binary_cross_entropy_with_logits(wlog, wb, pos_weight=pos_w)
 
     history = []
+    best: dict | None = None
     t0 = time.perf_counter()
     for ep in range(1, epochs + 1):
         model.train()
@@ -188,7 +209,15 @@ def train(epochs: int = 60) -> dict:
         with torch.no_grad():
             vloss = float(loss_of(xv, yv, wv))
             vpred = model(xv)[0].argmax(-1).cpu().numpy()
-        history.append({"epoch": ep, "train_loss": round(total / nb, 4), "val_loss": round(vloss, 4), "val_f1": round(_macro_f1(Y[val_idx].ravel(), vpred.ravel()) * 100, 2)})
+        vf1 = _macro_f1(Y[val_idx].ravel(), vpred.ravel())
+        history.append({"epoch": ep, "train_loss": round(total / nb, 4), "val_loss": round(vloss, 4), "val_f1": round(vf1 * 100, 2)})
+        # 保存验证集上最好的一轮：先比验证 Macro-F1，相同时取验证损失更低的
+        if best is None or (vf1, -vloss) > (best["f1"], -best["loss"]):
+            best = {"epoch": ep, "f1": vf1, "loss": vloss, "state": {k: v.detach().clone() for k, v in model.state_dict().items()}}
+
+    assert best is not None
+    model.load_state_dict(best["state"])
+    model.eval()
 
     torch.save({"state_dict": model.state_dict(), "channels": std.CHANNELS, "states": OUTPUT_STATES}, WEIGHT_PATH)
     global _MODEL_CACHE
@@ -202,11 +231,12 @@ def train(epochs: int = 60) -> dict:
         "train_seconds": round(time.perf_counter() - t0, 1),
         "device": device_label(),
         "epochs": epochs,
+        "best_epoch": best["epoch"],
         "history": history,
     }
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[server-fault-tcn] 训练完成 -> {WEIGHT_PATH.name}，用时 {state['train_seconds']}s，最终验证 Macro-F1 {history[-1]['val_f1']}%")
+    print(f"[server-fault-tcn] 训练完成 -> {WEIGHT_PATH.name}，用时 {state['train_seconds']}s，保存第 {best['epoch']} 轮（验证 Macro-F1 {best['f1'] * 100:.2f}%，验证损失 {best['loss']:.4f}）")
     return state
 
 
@@ -226,10 +256,10 @@ def _model() -> ServerFaultTCN:
 
 
 # ------------------------------------------------------------------ 标准接口
-def predict_batch(raw: np.ndarray) -> dict:
+def predict_batch(raw: np.ndarray, specs: list[dict]) -> dict:
     """服务器故障检测标准接口：raw [N, 60, 8]（std.CHANNELS 顺序、原始单位）"""
     model = _model()
-    X = _encode(np.asarray(raw, dtype=np.float32))
+    X = _encode(np.asarray(raw, dtype=np.float32), specs)
     probs, warns = [], []
     with torch.no_grad():
         for i in range(0, len(X), 256):

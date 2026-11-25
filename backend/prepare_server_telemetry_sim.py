@@ -3,7 +3,8 @@
 
   注意：本数据集由物理与运维规律仿真生成，不是真实采集数据。
 
-  - 模拟 8 台机房服务器（GPU 训练节点 ×3、Web 节点 ×2、数据库节点 ×2、缓存节点 ×1）的逐分钟运行遥测
+  - 模拟 8 台不同配置的机房服务器（GPU 训练节点 ×3、Web 节点 ×2、数据库节点 ×2、缓存节点 ×1）的逐分钟运行遥测；
+    测试集另含 2 种训练集中没有的硬件（低配边缘 VPS、高配 GPU 节点），磁盘与网络吞吐按各机器容量生成
   - 每条样本为 60 分钟、8 通道的多变量时序窗口（series/*.csv，60 行）：
       minute, cpu_pct, cpu_temp_c, mem_pct, gpu_pct, gpu_temp_c, gpu_mem_pct, disk_io_mbps, net_mbps
   - 6 类运行状态（逐分钟真值）：
@@ -32,15 +33,24 @@ WINDOW = 60
 WARN_HORIZON = 10
 COLUMNS = std.SERIES_COLUMNS  # 服务器故障检测标准
 
+# 负载基线 disk / net 以「参考量程」（磁盘 500 MB/s、网络 1000 Mbps）表示，输出时按各机器实际容量换算：
+#   实际值 = 参考值 / 参考量程 × 该机器容量，因此同样的利用率在不同硬件上对应不同的绝对读数。
+# spec 为机器规格（写入 meta.json 的 machines，供算法按容量换算成相对值）。
+REF_DISK, REF_NET = 500.0, 1000.0
 SERVERS = [
-    {"id": "gpu-node-01", "role": "GPU 训练节点", "gpu": True, "cpu": 55, "mem": 62, "disk": 120, "net": 380},
-    {"id": "gpu-node-02", "role": "GPU 训练节点", "gpu": True, "cpu": 50, "mem": 58, "disk": 110, "net": 340},
-    {"id": "gpu-node-03", "role": "GPU 训练节点", "gpu": True, "cpu": 60, "mem": 66, "disk": 140, "net": 420},
-    {"id": "web-node-01", "role": "Web 节点", "gpu": False, "cpu": 35, "mem": 45, "disk": 40, "net": 260},
-    {"id": "web-node-02", "role": "Web 节点", "gpu": False, "cpu": 32, "mem": 42, "disk": 35, "net": 240},
-    {"id": "db-node-01", "role": "数据库节点", "gpu": False, "cpu": 40, "mem": 70, "disk": 210, "net": 150},
-    {"id": "db-node-02", "role": "数据库节点", "gpu": False, "cpu": 38, "mem": 68, "disk": 190, "net": 140},
-    {"id": "cache-node-01", "role": "缓存节点", "gpu": False, "cpu": 25, "mem": 76, "disk": 20, "net": 300},
+    {"id": "gpu-node-01", "role": "GPU 训练节点", "gpu": True, "cpu": 55, "mem": 62, "disk": 120, "net": 380, "spec": {"cpu_cores": 32, "mem_gb": 256, "disk_max_mbps": 2000, "net_max_mbps": 10000, "gpu": True}},
+    {"id": "gpu-node-02", "role": "GPU 训练节点", "gpu": True, "cpu": 50, "mem": 58, "disk": 110, "net": 340, "spec": {"cpu_cores": 32, "mem_gb": 256, "disk_max_mbps": 2000, "net_max_mbps": 10000, "gpu": True}},
+    {"id": "gpu-node-03", "role": "GPU 训练节点", "gpu": True, "cpu": 60, "mem": 66, "disk": 140, "net": 420, "spec": {"cpu_cores": 48, "mem_gb": 384, "disk_max_mbps": 3000, "net_max_mbps": 25000, "gpu": True}},
+    {"id": "web-node-01", "role": "Web 节点", "gpu": False, "cpu": 35, "mem": 45, "disk": 40, "net": 260, "spec": {"cpu_cores": 8, "mem_gb": 32, "disk_max_mbps": 500, "net_max_mbps": 1000, "gpu": False}},
+    {"id": "web-node-02", "role": "Web 节点", "gpu": False, "cpu": 32, "mem": 42, "disk": 35, "net": 240, "spec": {"cpu_cores": 8, "mem_gb": 32, "disk_max_mbps": 500, "net_max_mbps": 1000, "gpu": False}},
+    {"id": "db-node-01", "role": "数据库节点", "gpu": False, "cpu": 40, "mem": 70, "disk": 210, "net": 150, "spec": {"cpu_cores": 16, "mem_gb": 128, "disk_max_mbps": 3000, "net_max_mbps": 10000, "gpu": False}},
+    {"id": "db-node-02", "role": "数据库节点", "gpu": False, "cpu": 38, "mem": 68, "disk": 190, "net": 140, "spec": {"cpu_cores": 16, "mem_gb": 64, "disk_max_mbps": 1000, "net_max_mbps": 10000, "gpu": False}},
+    {"id": "cache-node-01", "role": "缓存节点", "gpu": False, "cpu": 25, "mem": 76, "disk": 20, "net": 300, "spec": {"cpu_cores": 8, "mem_gb": 64, "disk_max_mbps": 500, "net_max_mbps": 10000, "gpu": False}},
+]
+# 只出现在测试集里的两种硬件：低配边缘 VPS 与高配 GPU 节点，用来检验算法能否泛化到没见过的硬件配置
+TEST_ONLY_SERVERS = [
+    {"id": "edge-vps-01", "role": "低配边缘节点（仅测试集）", "gpu": False, "cpu": 45, "mem": 72, "disk": 60, "net": 400, "spec": {"cpu_cores": 2, "mem_gb": 4, "disk_max_mbps": 150, "net_max_mbps": 100, "gpu": False}},
+    {"id": "hpc-node-01", "role": "高配 GPU 节点（仅测试集）", "gpu": True, "cpu": 40, "mem": 50, "disk": 60, "net": 150, "spec": {"cpu_cores": 64, "mem_gb": 512, "disk_max_mbps": 6000, "net_max_mbps": 25000, "gpu": True}},
 ]
 
 
@@ -153,8 +163,8 @@ def _simulate_window(rng: random.Random, srv: dict, fault: int, onset: int, dura
             "gpu_pct": round(_clip(gpu, 0, 100), 1),
             "gpu_temp_c": round(_clip(gpu_temp, 0, 99), 1),
             "gpu_mem_pct": round(_clip(gpu_mem, 0, 100), 1),
-            "disk_io_mbps": round(_clip(disk, 0, 500), 1),
-            "net_mbps": round(_clip(net, 0, 1000), 1),
+            "disk_io_mbps": round(_clip(disk, 0, REF_DISK) / REF_DISK * srv["spec"]["disk_max_mbps"], 1),
+            "net_mbps": round(_clip(net, 0, REF_NET) / REF_NET * srv["spec"]["net_max_mbps"], 1),
         }
         if rng.random() < 0.012:  # 采集掉点：某通道读数瞬间归零
             row[rng.choice(COLUMNS[1:])] = 0.0
@@ -168,8 +178,9 @@ def _simulate_window(rng: random.Random, srv: dict, fault: int, onset: int, dura
 def _make_split(split: str, count: int, seed: int) -> list[dict]:
     rng = random.Random(seed)
     records: list[dict] = []
+    pool = SERVERS + (TEST_ONLY_SERVERS if split == "test" else [])
     for i in range(count):
-        srv = SERVERS[i % len(SERVERS)]
+        srv = pool[i % len(pool)]
         # 35% 正常窗口；其余注入一种故障（GPU 过热仅在 GPU 节点上发生）
         if rng.random() < 0.35:
             fault = 0
@@ -195,7 +206,7 @@ README = """# server-telemetry-sim（服务器运行遥测故障检测 · 仿真
 
 > 本数据集由物理与运维规律**仿真生成**，用于算法开发与对照，不是真实采集数据。
 
-符合平台**服务器故障检测标准**（task = `server-fault`）的多变量时序数据集：8 台机房服务器（GPU 训练节点 ×3、Web 节点 ×2、数据库节点 ×2、缓存节点 ×1）的逐分钟运行遥测，每条样本为 **60 分钟 × 8 通道** 窗口，并带有**逐分钟**运行状态真值。所有符合该标准的算法都可以直接在本数据集上评测。
+符合平台**服务器故障检测标准**（task = `server-fault`）的多变量时序数据集：8 台不同配置的机房服务器（GPU 训练节点 ×3、Web 节点 ×2、数据库节点 ×2、缓存节点 ×1）的逐分钟运行遥测，测试集另含 2 种训练集中没有的硬件，每条样本为 **60 分钟 × 8 通道** 窗口，并带有**逐分钟**运行状态真值。所有符合该标准的算法都可以直接在本数据集上评测。
 
 ## 数据组成
 
@@ -212,8 +223,16 @@ README = """# server-telemetry-sim（服务器运行遥测故障检测 · 仿真
 | 1 | CPU过载 | 失控进程使 CPU 利用率逐步逼近 100%，CPU 温度同步升高 |
 | 2 | 内存泄漏 | 内存占用缓慢线性爬升，进入故障后触发交换、磁盘 IO 抬升 |
 | 3 | GPU过热 | GPU 温度升至 85–94 ℃，随后降频，利用率呈锯齿状下跌（仅 GPU 节点） |
-| 4 | 磁盘IO饱和 | 磁盘吞吐打满约 480 MB/s，CPU iowait 抬升、网络吞吐下降 |
+| 4 | 磁盘IO饱和 | 磁盘吞吐接近该机器的磁盘上限，CPU iowait 抬升、网络吞吐下降 |
 | 5 | 网络异常 | 链路中断、广播风暴或丢包重传 |
+
+## 机器规格（各机器容量不同，同样的利用率对应不同的绝对读数）
+
+| 机器 | 角色 | CPU 核 | 内存 | 磁盘上限 | 网络上限 | 出现在 |
+| --- | --- | --- | --- | --- | --- | --- |
+{machines}
+
+磁盘与网络吞吐按各机器容量生成，算法应结合 `meta.json` 中的 `machines` 规格按容量换算后再判断。测试集额外包含训练集中没有的低配边缘节点与高配 GPU 节点，用来检验算法能否泛化到新的硬件配置。
 
 故障发生前 6–12 分钟通常有可观测的**前兆漂移**（此时状态仍为「正常」），用于「未来 10 分钟故障预警」。
 
@@ -243,15 +262,20 @@ def build_dataset() -> dict:
             "id": "Admin/server-telemetry-sim",
             "name": "server-telemetry-sim",
             "displayName": "服务器运行遥测故障检测数据集（仿真）",
-            "summary": "【仿真】8 台服务器逐分钟 CPU / GPU / 内存 / 磁盘 / 网络遥测，60 分钟 × 8 通道窗口，6 类运行状态逐分钟真值与 10 分钟预警真值。",
+            "summary": "【仿真】8 种配置的服务器（测试集另含 2 种未见过的硬件）逐分钟 CPU / GPU / 内存 / 磁盘 / 网络遥测，60 分钟 × 8 通道窗口，6 类运行状态逐分钟真值与 10 分钟预警真值。",
             "tags": ["仿真数据", "服务器运维", "时序预测"],
-            "servers": [s["id"] for s in SERVERS],
+            "machines": {s["id"]: s["spec"] for s in SERVERS + TEST_ONLY_SERVERS},
+            "testOnlyMachines": [s["id"] for s in TEST_ONLY_SERVERS],
             "createdAt": "2026-11-25T01:00:00+08:00",
             "benchmark": {"id": "server-fault-sim-bench", "displayName": "服务器运行故障检测评测基准（仿真数据）"},
         },
         split_records,
     )
-    (DATA_DIR / "README.md").write_text(README.format(train=f"{meta['train']['files']:,}", test=f"{meta['test']['files']:,}"), encoding="utf-8")
+    machines = "\n".join(
+        f"| {s['id']} | {s['role']} | {s['spec']['cpu_cores']} | {s['spec']['mem_gb']} GB | {s['spec']['disk_max_mbps']:,} MB/s | {s['spec']['net_max_mbps']:,} Mbps | {'仅测试集' if s in TEST_ONLY_SERVERS else '训练集 + 测试集'} |"
+        for s in SERVERS + TEST_ONLY_SERVERS
+    )
+    (DATA_DIR / "README.md").write_text(README.format(train=f"{meta['train']['files']:,}", test=f"{meta['test']['files']:,}", machines=machines), encoding="utf-8")
     print(f"[sim] 已生成 Admin/server-telemetry-sim：train={meta['train']['files']} 条，test={meta['test']['files']} 条")
     print(f"[sim] test 类别分布 {meta['test']['classCounts']}")
     return meta

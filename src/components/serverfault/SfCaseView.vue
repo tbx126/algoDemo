@@ -53,6 +53,11 @@ const temps = computed<SfSeries[]>(() => {
   if (hasGpu.value) s.push({ key: 'gt', name: 'GPU 温度', values: props.c.channels.gpu_temp_c, color: 'var(--v7-s3)' })
   return s
 })
+/** 磁盘 / 网络坐标上限：有机器规格时用该机器的容量，否则取数据最大值 */
+const niceMax = (vals: number[]) => Math.max(10, Math.ceil(Math.max(...vals) / 10) * 10)
+const diskMax = computed(() => props.c.spec?.disk_max_mbps ?? niceMax(props.c.channels.disk_io_mbps))
+const netMax = computed(() => props.c.spec?.net_max_mbps ?? niceMax(props.c.channels.net_mbps))
+const fmtCap = (v: number, unit: string) => (v >= 1000 && unit === 'Mbps' ? `${+(v / 1000).toFixed(1)} Gbps` : `${v.toLocaleString()} ${unit}`)
 const disk = computed<SfSeries[]>(() => [{ key: 'disk', name: '磁盘吞吐', values: props.c.channels.disk_io_mbps, color: 'var(--v7-s1)', area: true }])
 const net = computed<SfSeries[]>(() => [{ key: 'net', name: '网络吞吐', values: props.c.channels.net_mbps, color: 'var(--v7-s1)', area: true }])
 
@@ -92,6 +97,7 @@ const agree = computed(() => {
   <div class="sf-viz-scope space-y-4">
     <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600 dark:text-gray-300">
       <span v-if="c.server" class="mono">{{ c.server }}<span v-if="c.role" class="text-gray-400"> · {{ c.role }}</span></span>
+      <span v-if="c.spec" class="text-gray-500">规格：<template v-if="c.spec.cpu_cores">{{ c.spec.cpu_cores }} 核 · </template><template v-if="c.spec.mem_gb">{{ c.spec.mem_gb }} GB · </template>磁盘 {{ fmtCap(c.spec.disk_max_mbps, 'MB/s') }} · 网络 {{ fmtCap(c.spec.net_max_mbps, 'Mbps') }}</span>
       <span v-if="c.label">真值：<strong class="text-gray-900 dark:text-white">{{ c.label }}</strong></span>
       <span v-if="c.predLabel">预测：<strong class="text-gray-900 dark:text-white">{{ c.predLabel }}</strong></span>
       <span v-if="c.onset !== undefined && c.onset >= 60" class="text-gray-500">故障发生在窗口之后（第 {{ c.onset }} 分钟），窗口内只有前兆</span>
@@ -110,12 +116,12 @@ const agree = computed(() => {
         <SfLineChart :x="x" :series="temps" :bands="bgBands" :markers="onsetMarker" :y-min="30" :y-max="100" :y-format="(v) => `${Math.round(v)}℃`" :x-format="minute" :height="narrow ? 150 : 170" />
       </div>
       <div>
-        <p class="mb-1 text-xs font-medium text-gray-700 dark:text-gray-200">磁盘吞吐（MB/s）</p>
-        <SfLineChart :x="x" :series="disk" :bands="bgBands" :markers="onsetMarker" :y-min="0" :y-max="500" :y-format="(v) => String(Math.round(v))" :x-format="minute" :height="narrow ? 130 : 150" />
+        <p class="mb-1 text-xs font-medium text-gray-700 dark:text-gray-200">磁盘吞吐（MB/s<template v-if="c.spec">，纵轴上限 = 该机器磁盘上限</template>）</p>
+        <SfLineChart :x="x" :series="disk" :bands="bgBands" :markers="onsetMarker" :y-min="0" :y-max="diskMax" :y-format="(v) => String(Math.round(v))" :x-format="minute" :height="narrow ? 130 : 150" />
       </div>
       <div>
-        <p class="mb-1 text-xs font-medium text-gray-700 dark:text-gray-200">网络吞吐（Mbps）</p>
-        <SfLineChart :x="x" :series="net" :bands="bgBands" :markers="onsetMarker" :y-min="0" :y-max="1000" :y-format="(v) => String(Math.round(v))" :x-format="minute" :height="narrow ? 130 : 150" />
+        <p class="mb-1 text-xs font-medium text-gray-700 dark:text-gray-200">网络吞吐（Mbps<template v-if="c.spec">，纵轴上限 = 该机器带宽</template>）</p>
+        <SfLineChart :x="x" :series="net" :bands="bgBands" :markers="onsetMarker" :y-min="0" :y-max="netMax" :y-format="(v) => String(Math.round(v))" :x-format="minute" :height="narrow ? 130 : 150" />
       </div>
     </div>
 

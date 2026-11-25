@@ -219,7 +219,7 @@ def _run_eval(eval_id: str, algo_id: str, bench_id: str) -> None:
                         "latencyMs": res["latencyMs"],
                         "peakGpuMemGB": mod.CARD.get("gpuMem", 0.1),
                         "isLatestValid": True,
-                        "vizServerFault": res["vizServerFault"],
+                        "vizServerFault": {**res["vizServerFault"], "bestEpoch": state.get("best_epoch")},
                     })
                     r["logs"].append("[done] 真实评测完成：" + "，".join(f"{x['label']}={m[x['key']]}{'' if x['unit'] == '分钟' else '%'}" for x in std.METRICS if x["key"] in m))
             _save_evals(evals)
@@ -377,11 +377,11 @@ def bootstrap_sf() -> dict:
 
 
 # ================================================================== 推理
-def _infer(mod: ModuleType, raw: np.ndarray, source: str, gt: list[int] | None, warn_gt: list[int] | None, dataset_id: str | None) -> dict:
+def _infer(mod: ModuleType, raw: np.ndarray, source: str, gt: list[int] | None, warn_gt: list[int] | None, dataset_id: str | None, spec: dict) -> dict:
     import time
 
     t0 = time.perf_counter()
-    out = mod.predict_batch(raw[None])
+    out = mod.predict_batch(raw[None], [spec])
     P = np.asarray(out["fault_prob"])[0]
     S = np.asarray(out["state"])[0] if out.get("state") is not None else None
     W = np.asarray(out["warn_prob"])[0] if out.get("warn_prob") is not None else None
@@ -405,6 +405,7 @@ def _infer(mod: ModuleType, raw: np.ndarray, source: str, gt: list[int] | None, 
             "first_fault_minute": first,
             "max_fault_prob": round(float(P.max()) * 100, 2),
             "risk_next_10min": round(float(W[-1]) * 100, 2) if W is not None else None,
+            "spec": spec,
             "channels": {c: [round(float(v), 1) for v in raw[:, k]] for k, c in enumerate(std.CHANNELS)},
             "fault_prob": [round(float(v), 4) for v in P],
             "state": S.astype(int).tolist() if S is not None else None,
@@ -426,14 +427,24 @@ def _resolve_sample(sample_path: str) -> tuple[str, Path, str]:
 
 
 def _make_infer_route(mod: ModuleType):
-    async def endpoint(version: str = Form("v1.0.0"), file: UploadFile | None = File(None), sample_path: str | None = Form(None)):
+    async def endpoint(
+        version: str = Form("v1.0.0"),
+        file: UploadFile | None = File(None),
+        sample_path: str | None = Form(None),
+        disk_max_mbps: float | None = Form(None),
+        net_max_mbps: float | None = Form(None),
+    ):
         if file is not None:
             text = (await file.read()).decode("utf-8-sig", errors="ignore")
             try:
                 raw = std.parse_series(list(csv.DictReader(io.StringIO(text))), file.filename or "upload.csv")
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
-            return _infer(mod, raw, file.filename or "upload.csv", None, None, None)
+            spec = {
+                "disk_max_mbps": disk_max_mbps if disk_max_mbps and disk_max_mbps > 0 else std.DEFAULT_SPEC["disk_max_mbps"],
+                "net_max_mbps": net_max_mbps if net_max_mbps and net_max_mbps > 0 else std.DEFAULT_SPEC["net_max_mbps"],
+            }
+            return _infer(mod, raw, file.filename or "upload.csv", None, None, None, spec)
         if not sample_path:
             raise HTTPException(status_code=400, detail="请上传标准遥测 CSV 或选择训练集示例")
         ds_id, d, fname = _resolve_sample(sample_path)
@@ -441,7 +452,8 @@ def _make_infer_route(mod: ModuleType):
         if rec is None:
             raise HTTPException(status_code=404, detail="示例不存在")
         raw = std.read_series(d / "train" / rec["file_name"])
-        return _infer(mod, raw, fname, json.loads(rec["state_seq"]), json.loads(rec["warn_seq"]), ds_id)
+        spec = (std.read_meta(d) or {}).get("machines", {}).get(rec["server"], std.DEFAULT_SPEC)
+        return _infer(mod, raw, fname, json.loads(rec["state_seq"]), json.loads(rec["warn_seq"]), ds_id, spec)
 
     return endpoint
 
@@ -482,6 +494,7 @@ def _make_dataset_routes(ds_id: str, d: Path) -> None:
             "server": rec["server"],
             "role": rec["role"],
             "onset": int(rec["onset_min"]),
+            "spec": (std.read_meta(d) or {}).get("machines", {}).get(rec["server"], std.DEFAULT_SPEC),
             "states": std.STATES,
             "channels": {c: [float(v) for v in raw[:, k]] for k, c in enumerate(std.CHANNELS)},
             "gt": json.loads(rec["state_seq"]),
@@ -526,6 +539,8 @@ def standard_sf():
         "states": std.STATES,
         "units": std.CHANNEL_UNITS,
         "metrics": std.METRICS,
+        "machineSpecRequired": std.MACHINE_SPEC_REQUIRED,
+        "defaultSpec": std.DEFAULT_SPEC,
         "datasets": list(DATASETS),
         "algorithms": list(ALGOS),
     }

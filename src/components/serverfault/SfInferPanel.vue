@@ -8,7 +8,7 @@ import { Download, FileUp, LoaderCircle, Play, RotateCcw, Shuffle } from 'lucide
 import type { Algorithm, InferenceResult } from '@/types'
 import { infer } from '@/api'
 import SfCaseView from './SfCaseView.vue'
-import { SF_STATES, type SfCase, type SfChannel } from './types'
+import { SF_STATES, type SfCase, type SfChannel, type SfSpec } from './types'
 
 const props = defineProps<{ algo: Algorithm; version: string }>()
 
@@ -23,6 +23,9 @@ const result = ref<InferenceResult | null>(null)
 const running = ref(false)
 const error = ref('')
 const fileEl = ref<HTMLInputElement>()
+/** 上传 CSV 时所在机器的容量（磁盘、网络吞吐需结合容量判断是否打满） */
+const diskMax = ref(500)
+const netMax = ref(1000)
 const cursor = new Map<string, number>()
 
 onMounted(async () => {
@@ -73,7 +76,8 @@ async function run() {
   running.value = true
   error.value = ''
   try {
-    result.value = await infer(props.algo.id, props.version, { ...input.value })
+    const fields = input.value.file ? { disk_max_mbps: String(diskMax.value), net_max_mbps: String(netMax.value) } : undefined
+    result.value = await infer(props.algo.id, props.version, { ...input.value, fields })
   } catch (e) {
     error.value = (e as Error).message || '推理失败'
   } finally {
@@ -96,6 +100,7 @@ type SfRaw = {
   first_fault_minute: number | null
   source_file: string
   dataset: string | null
+  spec: SfSpec | null
   states: string[]
   channels: Record<SfChannel, number[]>
   fault_prob: number[]
@@ -113,6 +118,7 @@ const caseData = computed<SfCase | null>(() => {
     file: r.source_file,
     label: r.gt ? (onset >= 0 ? r.states[Math.max(...r.gt)] : '正常') : undefined,
     predLabel: r.status,
+    spec: r.spec,
     onset: r.gt ? onset : undefined,
     channels: r.channels,
     gt: r.gt,
@@ -147,6 +153,10 @@ const statusCls = computed(() =>
         <span class="text-[11px] text-gray-400">8 列：cpu_pct、cpu_temp_c、mem_pct、gpu_pct、gpu_temp_c、gpu_mem_pct、disk_io_mbps、net_mbps</span>
       </div>
       <input ref="fileEl" type="file" class="hidden" accept=".csv,text/csv" @change="onFile(($event.target as HTMLInputElement).files?.[0])" />
+      <div class="grid grid-cols-2 gap-2 text-xs text-gray-500">
+        <label class="flex flex-col gap-1">该机器磁盘上限（MB/s）<input v-model.number="diskMax" type="number" min="1" class="input py-1 text-xs" /></label>
+        <label class="flex flex-col gap-1">该机器网络带宽（Mbps）<input v-model.number="netMax" type="number" min="1" class="input py-1 text-xs" /></label>
+      </div>
       <div v-if="datasets.length">
         <div class="mb-1.5 flex items-center gap-2 text-xs text-gray-500">
           <Shuffle class="size-3.5 shrink-0" />

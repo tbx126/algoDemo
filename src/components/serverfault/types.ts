@@ -10,11 +10,21 @@ export const SF_STATES = ['正常', 'CPU过载', '内存泄漏', 'GPU过热', '�
 
 export type SfChannel = 'cpu_pct' | 'cpu_temp_c' | 'mem_pct' | 'gpu_pct' | 'gpu_temp_c' | 'gpu_mem_pct' | 'disk_io_mbps' | 'net_mbps'
 
+/** 机器规格：磁盘 / 网络上限必填，用于按容量换算与画图坐标 */
+export interface SfSpec {
+  disk_max_mbps: number
+  net_max_mbps: number
+  cpu_cores?: number
+  mem_gb?: number
+  gpu?: boolean
+}
+
 /** 一个 60 分钟窗口：标准遥测 + 真值（可选）+ 算法输出（可选） */
 export interface SfCase {
   file: string
   server?: string
   role?: string
+  spec?: SfSpec | null
   label?: string
   predLabel?: string
   onset?: number
@@ -34,6 +44,8 @@ export interface ServerFaultViz {
   states: string[]
   channels: SfChannel[]
   capabilities?: { state: boolean; warn: boolean }
+  /** 算法实际保存的训练轮次（验证集最佳） */
+  bestEpoch?: number | null
   history: { epoch: number; train_loss: number; val_loss: number; val_f1: number }[]
   thresholdCurve: { threshold: number; precision: number; recall: number; f1: number; fpr: number }[]
   delayCdf: { minute: number; detected: number }[]

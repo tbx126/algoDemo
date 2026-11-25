@@ -1032,7 +1032,7 @@ export async function getQueueStatus(): Promise<QueueStatus> {
 // ============ 单图推理  POST /api/algorithms/{id}/infer ============
 const PALETTE = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#84cc16', '#06b6d4', '#a855f7', '#eab308']
 
-export async function infer(algorithmId: string, version: string, input: { dataUrl?: string; file?: File; fileName: string; size: number; task?: TaskType }): Promise<InferenceResult> {
+export async function infer(algorithmId: string, version: string, input: { dataUrl?: string; file?: File; fileName: string; size: number; task?: TaskType; fields?: Record<string, string> }): Promise<InferenceResult> {
   // Admin/random：走后端全任务随机推理（忽略输入，每次输出永远随机）
   if (realBackendAvailable && algorithmId === REAL_RANDOM_ID) {
     const fd = new FormData()
@@ -1045,6 +1045,7 @@ export async function infer(algorithmId: string, version: string, input: { dataU
   if (realBackendAvailable && REAL_ALGO_IDS.has(algorithmId)) {
     const fd = new FormData()
     fd.append('version', version)
+    for (const [k, v] of Object.entries(input.fields ?? {})) fd.append(k, v)
     if (input.file) {
       fd.append('file', input.file, input.fileName)
     } else if (input.dataUrl?.startsWith('/real-api/')) {
